@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Vault Secret Engine Demo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="container">
+        <button onclick="resetDemo()" style="float: right; background-color: #dc2626; margin-top: 25px;">Reset Demo</button>
+        <h1>🔐 Vault Secret Engine Demo</h1>
+
+        <!-- NEW: Engine Selection First -->
+        <div id="engineSelector" class="vault-box">
+            <h2>Select Secret Engine</h2>
+            <p class="muted">Choose an engine first, then request a token for access.</p>
+            <div class="engine-grid">
+                <button class="engine-card" onclick="selectEngine('kv')">KV</button>
+                <button class="engine-card" onclick="selectEngine('transit')">Transit</button>
+                <button class="engine-card" onclick="selectEngine('pki')">PKI</button>
+                <button class="engine-card" onclick="selectEngine('database')">Database</button>
+                <button class="engine-card" onclick="selectEngine('ssh')">SSH</button>
+                <button class="engine-card" onclick="selectEngine('aws')">AWS</button>
+                <button class="engine-card" onclick="selectEngine('azure')">Azure</button>
+                <button class="engine-card" onclick="selectEngine('gcp')">GCP</button>
+                <button class="engine-card" onclick="selectEngine('gcp-kms')">Google Cloud KMS</button>
+                <button class="engine-card" onclick="selectEngine('ad')">Active Directory</button>
+                <button class="engine-card" onclick="selectEngine('ldap')">LDAP</button>
+                <button class="engine-card" onclick="selectEngine('rabbitmq')">RabbitMQ</button>
+                <button class="engine-card" onclick="selectEngine('consul')">Consul</button>
+                <button class="engine-card" onclick="selectEngine('nomad')">Nomad</button>
+                <button class="engine-card" onclick="selectEngine('kubernetes')">Kubernetes</button>
+                <button class="engine-card" onclick="selectEngine('totp')">TOTP</button>
+                <button class="engine-card" onclick="selectEngine('transform')">Transform</button>
+                <button class="engine-card" onclick="selectEngine('kmip')">KMIP</button>
+            </div>
+            <p><strong>Selected:</strong> <span id="selectedEngineLabel">None</span></p>
+        </div>
+
+        <div id="tokenBox" class="vault-box hidden">
+            <h2>Enter Vault</h2>
+
+            <div class="input-row">
+                <div>
+                    <label>Select Policy:</label>
+                    <select id="policySelect">
+                        <option value="kv-read">KV Read Only</option>
+                        <option value="kv-admin">KV Admin (Super)</option>
+                        <option value="transit-encrypt">Transit Encrypt Only</option>
+                        <option value="pki-admin">PKI Admin</option>
+                        <option value="db-admin">Database Admin</option>
+                        <option value="aws-admin">AWS Admin</option>
+                        <option value="gcp-admin">GCP Admin</option>
+                        <option value="transform-admin">Transform Admin (Enterprise)</option>
+                        <option value="kmip-admin">KMIP Admin (Enterprise)</option>
+                        <option value="k8s-admin">Kubernetes Admin</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Token TTL:</label>
+                    <select id="ttlSelect">
+                        <option value="1">1 Minute</option>
+                        <option value="2">2 Minutes</option>
+                        <option value="5">5 Minutes</option>
+                        <option value="10" selected>10 Minutes</option>
+                        <option value="30">30 Minutes</option>
+                        <option value="60">60 Minutes</option>
+                    </select>
+                </div>
+            </div>
+
+            <button onclick="generateToken()">Generate Token</button>
+
+            <div id="tokenDisplay" class="hidden">
+                <p><strong>Token:</strong> <span id="tokenValue"></span></p>
+                <p><strong>Policy:</strong> <span id="policyValue"></span></p>
+                <p><strong>Expires In:</strong> <span id="tokenTtlValue"></span></p>
+                
+                <!-- NEW: Token input field for validation -->
+                <label style="margin-top: 15px; display: block;">Paste Token to Enter:</label>
+                <input type="text" id="enteredTokenInput" placeholder="Paste generated token here..." style="margin-bottom: 10px; width: 100%; box-sizing: border-box;" />
+                
+                <button onclick="enterVault()">Enter Vault</button>
+            </div>
+        </div>
+
+        <!-- KV Secret Engine (Phase 1 deep dive) -->
+        <div id="kvWorkspace" class="vault-box hidden">
+            <h2>🗂 KV Secret Engine (v2 Demo)</h2>
+            <p class="muted">Path simulation: <code>secret/data/</code> and <code>secret/metadata/</code></p>
+
+            <div class="grid">
+                <div>
+                    <label>Secret Path</label>
+                    <input id="kvPath" type="text" placeholder="apps/payroll/db" />
+
+                    <label>Key</label>
+                    <input id="kvKey" type="text" placeholder="password" />
+
+                    <label>Value</label>
+                    <input id="kvValue" type="text" placeholder="s3cr3t-value" />
+                </div>
+
+                <div>
+                    <h3>Actions</h3>
+                    <div class="btn-row">
+                        <button onclick="kvPut()">Put (Create/Update)</button>
+                        <button onclick="kvPatch()">Patch</button>
+                        <button onclick="kvRead()">Read Latest</button>
+                    </div>
+                    <div class="btn-row">
+                        <button onclick="kvSoftDelete()">Soft Delete Latest</button>
+                        <button onclick="kvUndelete()">Undelete Latest</button>
+                        <button onclick="kvDestroy()">Destroy Latest</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="kvResult" class="result"></div>
+
+            <aside class="explain-box">
+                <h3>💡 What’s happening?</h3>
+                <p id="kvExplainText">Select an action to see how Vault processes it under the hood.</p>
+            </aside>
+        </div>
+
+        <!-- NEW: Transit Secret Engine (Phase 2) -->
+        <div id="transitWorkspace" class="vault-box hidden">
+            <h2>🔏 Transit Secret Engine (EaaS Demo)</h2>
+            <p class="muted">Encryption as a Service: Vault handles cryptography, but does <strong>not</strong> store your data.</p>
+
+            <div class="grid">
+                <div>
+                    <label>Encryption Key Name</label>
+                    <input id="transitKey" type="text" placeholder="e.g., payment-key" />
+
+                    <label>Plaintext (Data to hide)</label>
+                    <input id="transitPlaintext" type="text" placeholder="e.g., 4111-2222-3333-4444" />
+
+                    <label>Ciphertext (Encrypted Data)</label>
+                    <input id="transitCiphertext" type="text" placeholder="e.g., vault:v1:..." />
+                </div>
+
+                <div>
+                    <h3>Actions</h3>
+                    <div class="btn-row">
+                        <button onclick="transitCreateKey()">Create Key</button>
+                    </div>
+                    <div class="btn-row">
+                        <button onclick="transitEncrypt()">Encrypt Data</button>
+                        <button onclick="transitDecrypt()">Decrypt Data</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="transitResult" class="result"></div>
+
+            <aside class="explain-box">
+                <h3>💡 What’s happening?</h3>
+                <p id="transitExplainText">Select an action to see how Vault encrypts data in transit.</p>
+            </aside>
+        </div>
+
+        <!-- NEW: PKI Secret Engine (Phase 3) -->
+        <div id="pkiWorkspace" class="vault-box hidden">
+            <h2>📜 PKI Secret Engine (Certificates Demo)</h2>
+            <p class="muted">Generate dynamic X.509 certificates on the fly.</p>
+
+            <div class="grid">
+                <div>
+                    <label>Common Name (CN)</label>
+                    <input id="pkiCn" type="text" placeholder="e.g., api.mycompany.com" />
+                </div>
+
+                <div>
+                    <h3>Actions</h3>
+                    <div class="btn-row">
+                        <button onclick="pkiGenerateRoot()">1. Generate Root CA</button>
+                        <button onclick="pkiIssueCert()">2. Issue Certificate</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="pkiResult" class="result"></div>
+
+            <aside class="explain-box">
+                <h3>💡 What’s happening?</h3>
+                <p id="pkiExplainText">Select an action to see how Vault manages PKI.</p>
+            </aside>
+        </div>
+
+        <!-- NEW: Database Secret Engine (Phase 4) -->
+        <div id="databaseWorkspace" class="vault-box hidden">
+            <h2>🗄 Database Secret Engine (Dynamic Creds Demo)</h2>
+            <p class="muted">Generate temporary, time-limited database credentials.</p>
+
+            <div class="grid">
+                <div>
+                    <label>Database Role</label>
+                    <input id="dbRole" type="text" placeholder="e.g., readonly-role" value="readonly-role" />
+                </div>
+
+                <div>
+                    <h3>Actions</h3>
+                    <div class="btn-row">
+                        <button onclick="dbGenerateCreds()">Generate Credentials</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="dbResult" class="result"></div>
+
+            <aside class="explain-box">
+                <h3>💡 What’s happening?</h3>
+                <p id="dbExplainText">Select an action to see how Vault generates dynamic DB credentials.</p>
+            </aside>
+        </div>
+
+        <!-- NEW: AWS Secret Engine -->
+        <div id="awsWorkspace" class="vault-box hidden">
+            <h2>☁️ AWS Secret Engine</h2>
+            <div class="grid">
+                <div>
+                    <label>AWS Role</label>
+                    <input id="awsRole" type="text" placeholder="readonly-role" value="readonly-role" />
+                </div>
+                <div class="btn-row">
+                    <button onclick="awsGenerateCreds()">Generate AWS Credentials</button>
+                </div>
+            </div>
+            <div id="awsResult" class="result"></div>
+            <aside class="explain-box"><p id="awsExplainText">Generate temporary IAM-style credentials.</p></aside>
+        </div>
+
+        <!-- NEW: GCP Secret Engine -->
+        <div id="gcpWorkspace" class="vault-box hidden">
+            <h2>🌐 GCP Secret Engine</h2>
+            <div class="grid">
+                <div>
+                    <label>GCP Service Account</label>
+                    <input id="gcpSa" type="text" placeholder="demo-sa@project.iam.gserviceaccount.com" />
+                </div>
+                <div class="btn-row">
+                    <button onclick="gcpGenerateToken()">Generate Access Token</button>
+                </div>
+            </div>
+            <div id="gcpResult" class="result"></div>
+            <aside class="explain-box"><p id="gcpExplainText">Generate short-lived GCP access token.</p></aside>
+        </div>
+
+        <!-- NEW: Transform (Enterprise) Secret Engine -->
+        <div id="transformWorkspace" class="vault-box hidden">
+            <h2>🧩 Transform Secret Engine (Enterprise)</h2>
+            <p class="muted">Format-Preserving Encryption (FPE) and Template Masking.</p>
+
+            <div class="grid">
+                <div>
+                    <label>Input Data (For FPE)</label>
+                    <input id="transformInput" type="text" placeholder="e.g., ABC12345" />
+
+                    <label>Custom Alphabet (For FPE)</label>
+                    <input id="transformAlphabet" type="text" value="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" />
+
+                    <label>Masking Template</label>
+                    <input id="transformTemplate" type="text" value="AAA-####-AA##" />
+                </div>
+
+                <div>
+                    <h3>Actions</h3>
+                    <div class="btn-row">
+                        <button onclick="transformFPE()">1. FPE Transform</button>
+                        <button onclick="transformTemplateMask()">2. Template Mask</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="transformResult" class="result"></div>
+
+            <aside class="explain-box">
+                <h3>💡 What’s happening?</h3>
+                <p id="transformExplainText">Select an action to see how Vault transforms data.</p>
+            </aside>
+        </div>
+
+        <!-- NEW: KMIP (Enterprise) Secret Engine -->
+        <div id="kmipWorkspace" class="vault-box hidden">
+            <h2>🗝️ KMIP Secret Engine (Enterprise)</h2>
+            <div class="grid">
+                <div>
+                    <label>Key Name</label>
+                    <input id="kmipKeyName" type="text" placeholder="kmip-key-01" />
+                </div>
+                <div class="btn-row">
+                    <button onclick="kmipCreateKey()">Create Managed Key</button>
+                </div>
+            </div>
+            <div id="kmipResult" class="result"></div>
+            <aside class="explain-box"><p id="kmipExplainText">Manage external key lifecycle via KMIP.</p></aside>
+        </div>
+
+        <!-- NEW: Kubernetes Secret Engine -->
+        <div id="kubernetesWorkspace" class="vault-box hidden">
+            <h2>☸️ Kubernetes Secret Engine</h2>
+            <p class="muted">Generate short-lived Kubernetes service account tokens.</p>
+            <div class="grid">
+                <div>
+                    <label>Kubernetes Role</label>
+                    <input id="k8sRole" type="text" placeholder="demo-role" value="demo-role" />
+                    <label>Namespace</label>
+                    <input id="k8sNamespace" type="text" placeholder="default" value="default" />
+                </div>
+                <div class="btn-row">
+                    <button onclick="k8sGenerateToken()">Generate K8s Token</button>
+                </div>
+            </div>
+            <div id="k8sResult" class="result"></div>
+            <aside class="explain-box">
+                <p id="k8sExplainText">Generate dynamic Kubernetes credentials mapped to a Vault role.</p>
+            </aside>
+        </div>
+
+    </div>
+
+<!-- NEW: Link the categorized JS files -->
+<script src="kv.js"></script>
+<script src="transit.js"></script>
+<script src="pki.js"></script>
+<script src="database.js"></script>
+<script src="aws.js"></script>
+<script src="gcp.js"></script>
+<script src="transform.js"></script>
+<script src="kmip.js"></script>
+<script src="kubernetes.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
