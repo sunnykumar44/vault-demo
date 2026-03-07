@@ -7,6 +7,12 @@ function resetPki() {
   const resultEl = document.getElementById("pkiResult");
   if (resultEl) resultEl.textContent = "";
   updatePkiExplain("Select an action to see how Vault manages PKI.");
+
+  // Hide and stop video
+  const vidBox = document.getElementById("pkiVideoBox");
+  const vid = document.getElementById("pkiVideo");
+  if (vidBox) vidBox.classList.add("hidden");
+  if (vid) { vid.pause(); vid.currentTime = 0; }
 }
 
 function updatePkiExplain(text) {
@@ -84,4 +90,10 @@ ${key}`
   );
 
   updatePkiExplain(`<strong>ISSUE CERTIFICATE:</strong> Vault generated a demo X.509 cert + private key for <code>${cn}</code>.`);
+
+  // Reveal and play video
+  const vidBox = document.getElementById("pkiVideoBox");
+  const vid = document.getElementById("pkiVideo");
+  if (vidBox) vidBox.classList.remove("hidden");
+  if (vid) vid.play();
 }

@@ -13,6 +13,12 @@ function resetTransform() {
     resultEl.style.display = "none";
   }
   if (explainEl) explainEl.innerHTML = "Select an action to see how Vault transforms data.";
+
+  // Hide and stop video
+  const vidBox = document.getElementById("transformVideoBox");
+  const vid = document.getElementById("transformVideo");
+  if (vidBox) vidBox.classList.add("hidden");
+  if (vid) { vid.pause(); vid.currentTime = 0; }
 }
 
 function setTransformResult(text) {
@@ -52,6 +58,12 @@ function transformFPE() {
 
   setTransformResult(`Input:    ${input}\nAlphabet: ${alphabet}\nOutput:   ${fpe}\nMode:     Format-Preserving Encryption (FPE)`);
   setTransformExplain("<strong>FPE:</strong> FPE encrypts the input while preserving its length and restricting the output characters to the defined alphabet. The result looks different but maintains structural consistency.");
+
+  // Reveal and play video
+  const vidBox = document.getElementById("transformVideoBox");
+  const vid = document.getElementById("transformVideo");
+  if (vidBox) vidBox.classList.remove("hidden");
+  if (vid) vid.play();
 }
 
 function transformTemplateMask() {
@@ -73,4 +85,10 @@ function transformTemplateMask() {
 
   setTransformResult(`Template: ${template}\nOutput:   ${masked}\nMode:     Template Masking`);
   setTransformExplain("<strong>TEMPLATE MASKING:</strong> Vault generated a masked value based strictly on your template. <code>A</code> became a random letter, <code>#</code> became a random number, and symbols were preserved.");
+
+  // Reveal and play video
+  const vidBox = document.getElementById("transformVideoBox");
+  const vid = document.getElementById("transformVideo");
+  if (vidBox) vidBox.classList.remove("hidden");
+  if (vid) vid.play();
 }

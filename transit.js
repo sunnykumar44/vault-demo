@@ -8,6 +8,12 @@ function resetTransit() {
   const tResultEl = document.getElementById("transitResult");
   if (tResultEl) tResultEl.innerText = "";
   updateTransitExplain("Select an action to see how Vault encrypts data in transit.");
+
+  // Hide and stop video
+  const vidBox = document.getElementById("transitVideoBox");
+  const vid = document.getElementById("transitVideo");
+  if (vidBox) vidBox.classList.add("hidden");
+  if (vid) { vid.pause(); vid.currentTime = 0; }
 }
 
 function clearTransitInputs() {
@@ -62,6 +68,12 @@ function transitEncrypt() {
   
   setTransitResult(`ENCRYPT SUCCESS → Ciphertext generated using key '${keyName}'.`);
   updateTransitExplain(`<strong>ENCRYPT:</strong> You sent plaintext to Vault. Vault encrypted it using '${keyName}' and returned the ciphertext (<code>${ciphertext}</code>). Vault did <strong>not</strong> save your data.`);
+
+  // Reveal and play video
+  const vidBox = document.getElementById("transitVideoBox");
+  const vid = document.getElementById("transitVideo");
+  if (vidBox) vidBox.classList.remove("hidden");
+  if (vid) vid.play();
 }
 
 function transitDecrypt() {
@@ -90,6 +102,12 @@ function transitDecrypt() {
     
     setTransitResult(`DECRYPT SUCCESS → Plaintext recovered using key '${keyName}'.`);
     updateTransitExplain(`<strong>DECRYPT:</strong> You sent the ciphertext back to Vault. Vault verified the key, decrypted the data, and returned your original plaintext.`);
+    
+    // Reveal and play video
+    const vidBox = document.getElementById("transitVideoBox");
+    const vid = document.getElementById("transitVideo");
+    if (vidBox) vidBox.classList.remove("hidden");
+    if (vid) vid.play();
   } catch (e) {
     alert("Failed to decrypt. Ciphertext is corrupted.");
   }
