@@ -32,6 +32,7 @@ function resetDemo() {
   if (typeof resetTransform === "function") resetTransform();
   if (typeof resetKmip === "function") resetKmip();
   if (typeof resetKubernetes === "function") resetKubernetes();
+  if (typeof resetExtra === 'function') resetExtra(); // Added for the new files
 
   // Reset UI
   document.getElementById("selectedEngineLabel").textContent = "None";
@@ -49,9 +50,10 @@ function resetDemo() {
 // Helper to hide all workspaces
 function hideAllWorkspaces() {
   const workspaces = [
-    "kvWorkspace","transitWorkspace","pkiWorkspace","databaseWorkspace",
-    "awsWorkspace","gcpWorkspace","transformWorkspace","kmipWorkspace",
-    "kubernetesWorkspace"
+    "kvWorkspace", "transitWorkspace", "pkiWorkspace", "databaseWorkspace",
+    "awsWorkspace", "gcpWorkspace", "transformWorkspace", "kmipWorkspace",
+    "kubernetesWorkspace", "sshWorkspace", "azureWorkspace", "adWorkspace", "totpWorkspace",
+    "ldapWorkspace", "rabbitmqWorkspace", "consulWorkspace", "nomadWorkspace"
   ];
   workspaces.forEach(id => {
     const el = document.getElementById(id);
@@ -144,6 +146,27 @@ function enterVault() {
   enteredToken = typedToken; 
   hideAllWorkspaces();
 
+  // NEW: Educational Intros for every engine
+  const engineIntros = {
+    kv: { id: "kvExplainText", text: "<strong>What it does:</strong> Stores static secrets (key-value) in a secure, versioned file system.<br><br><strong>Use Case:</strong> Replacing hardcoded passwords or API keys in source code." },
+    transit: { id: "transitExplainText", text: "<strong>What it does:</strong> Vault acts as Cryptography-as-a-Service, encrypting data without keeping it.<br><br><strong>Use Case:</strong> Encrypting user PII/Credit Cards before saving them to a database." },
+    pki: { id: "pkiExplainText", text: "<strong>What it does:</strong> Acts as a Certificate Authority to generate dynamic X.509 certs on the fly.<br><br><strong>Use Case:</strong> Establishing Zero Trust mutual TLS (mTLS) between microservices." },
+    database: { id: "dbExplainText", text: "<strong>What it does:</strong> Generates temporary, time-limited database credentials.<br><br><strong>Use Case:</strong> Giving an app or developer read-only DB access that auto-expires in 1 hour." },
+    transform: { id: "transformExplainText", text: "<strong>What it does:</strong> Performs Format-Preserving Encryption (FPE) and Masking.<br><br><strong>Use Case:</strong> Obfuscating credit card numbers in logs while keeping the system format valid." },
+    aws: { id: "awsExplainText", text: "<strong>What it does:</strong> Dynamically generates short-lived AWS IAM credentials.<br><br><strong>Use Case:</strong> CI/CD pipelines requesting AWS access only for the duration of a build." },
+    gcp: { id: "gcpExplainText", text: "<strong>What it does:</strong> Creates GCP OAuth2 access tokens or Service Account keys.<br><br><strong>Use Case:</strong> Automated scripts deploying infrastructure into Google Cloud." },
+    azure: { id: "azureExplainText", text: "<strong>What it does:</strong> Generates Azure AD Service Principal credentials.<br><br><strong>Use Case:</strong> Temporary programmatic access to Azure Resource Manager." },
+    ssh: { id: "sshExplainText", text: "<strong>What it does:</strong> Issues signed SSH certificates for secure authentication.<br><br><strong>Use Case:</strong> Passwordless login to Linux servers without managing static SSH keys." },
+    ad: { id: "adExplainText", text: "<strong>What it does:</strong> Manages Microsoft Active Directory passwords dynamically.<br><br><strong>Use Case:</strong> Auto-rotating AD service account passwords regularly." },
+    ldap: { id: "ldapExplainText", text: "<strong>What it does:</strong> Generates dynamic LDAP credentials.<br><br><strong>Use Case:</strong> Temporary LDAP access for legacy system integrations." },
+    totp: { id: "totpExplainText", text: "<strong>What it does:</strong> Generates Time-Based One-Time Passwords.<br><br><strong>Use Case:</strong> Vault acts as an authenticator app (like Google Auth) for programmatic 2FA." },
+    rabbitmq: { id: "rmqExplainText", text: "<strong>What it does:</strong> Generates dynamic RabbitMQ users with specific vhost permissions.<br><br><strong>Use Case:</strong> Microservices needing isolated, temporary message queue access." },
+    consul: { id: "consulExplainText", text: "<strong>What it does:</strong> Generates short-lived Consul ACL tokens.<br><br><strong>Use Case:</strong> Automated secure microservice registration in HashiCorp Consul." },
+    nomad: { id: "nomadExplainText", text: "<strong>What it does:</strong> Generates temporary Nomad ACL tokens.<br><br><strong>Use Case:</strong> CI/CD pipelines deploying jobs securely to a HashiCorp Nomad cluster." },
+    kubernetes: { id: "k8sExplainText", text: "<strong>What it does:</strong> Issues temporary Kubernetes Service Account tokens.<br><br><strong>Use Case:</strong> Cross-cluster authentication and ephemeral pod-to-pod access." },
+    kmip: { id: "kmipExplainText", text: "<strong>What it does:</strong> Vault acts as a KMIP server to manage external encryption keys.<br><br><strong>Use Case:</strong> VMware vSphere or NetApp storage volume encryption." }
+  };
+
   if (selectedEngine === "kv") {
     if (currentPolicy !== "kv-read" && currentPolicy !== "kv-admin") {
       alert("Permission denied: policy does not allow KV access.");
@@ -193,14 +216,55 @@ function enterVault() {
     document.getElementById("kmipWorkspace").classList.remove("hidden");
     return;
   } else if (selectedEngine === "kubernetes") {
-    if (currentPolicy !== "k8s-admin" && currentPolicy !== "kv-admin") {
-      alert("Permission denied for Kubernetes.");
-      return;
-    }
+    if (currentPolicy !== "k8s-admin" && currentPolicy !== "kv-admin") return alert("Permission denied.");
     document.getElementById("kubernetesWorkspace").classList.remove("hidden");
+    
+  } else if (selectedEngine === "ssh") {
+    if (currentPolicy !== "ssh-admin" && currentPolicy !== "kv-admin") return alert("Permission denied.");
+    document.getElementById("sshWorkspace").classList.remove("hidden");
+
+  } else if (selectedEngine === "azure") {
+    if (currentPolicy !== "azure-admin" && currentPolicy !== "kv-admin") return alert("Permission denied.");
+    document.getElementById("azureWorkspace").classList.remove("hidden");
+
+  } else if (selectedEngine === "ad") {
+    if (currentPolicy !== "ad-admin" && currentPolicy !== "kv-admin") return alert("Permission denied.");
+    document.getElementById("adWorkspace").classList.remove("hidden");
+
+  } else if (selectedEngine === "totp") {
+    if (currentPolicy !== "totp-admin" && currentPolicy !== "kv-admin") return alert("Permission denied.");
+    document.getElementById("totpWorkspace").classList.remove("hidden");
+
+  } else if (selectedEngine === "ldap") {
+    if (currentPolicy !== "ldap-admin" && currentPolicy !== "kv-admin") return alert("Permission denied.");
+    document.getElementById("ldapWorkspace").classList.remove("hidden");
+
+  } else if (selectedEngine === "rabbitmq") {
+    if (currentPolicy !== "rabbitmq-admin" && currentPolicy !== "kv-admin") return alert("Permission denied.");
+    document.getElementById("rabbitmqWorkspace").classList.remove("hidden");
+
+  } else if (selectedEngine === "consul") {
+    if (currentPolicy !== "consul-admin" && currentPolicy !== "kv-admin") return alert("Permission denied.");
+    document.getElementById("consulWorkspace").classList.remove("hidden");
+
+  } else if (selectedEngine === "nomad") {
+    if (currentPolicy !== "nomad-admin" && currentPolicy !== "kv-admin") return alert("Permission denied.");
+    document.getElementById("nomadWorkspace").classList.remove("hidden");
+
+  } else if (selectedEngine === "gcp-kms") {
+    alert("GCP KMS utilizes the same workflow as the Transit interface behind the scenes. This specific view will be available in V2.");
     return;
   } else {
-    alert(`The ${selectedEngineLabel} engine will be added in the next phase.`);
+    alert(`The ${selectedEngineLabel} engine workflow is currently a placeholder.`);
+  }
+
+  // NEW: Inject the educational text into the sidebar after the workspace opens
+  const intro = engineIntros[selectedEngine];
+  if (intro) {
+      const explainEl = document.getElementById(intro.id);
+      if (explainEl) {
+          explainEl.innerHTML = intro.text;
+      }
   }
 }
 

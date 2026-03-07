@@ -55,6 +55,16 @@
                         <option value="transform-admin">Transform Admin (Enterprise)</option>
                         <option value="kmip-admin">KMIP Admin (Enterprise)</option>
                         <option value="k8s-admin">Kubernetes Admin</option>
+                        <!-- NEW POLICIES -->
+                        <option value="azure-admin">Azure Admin</option>
+                        <option value="ssh-admin">SSH Admin</option>
+                        <option value="ad-admin">Active Directory Admin</option>
+                        <option value="totp-admin">TOTP Admin</option>
+                        <!-- THE FINAL 4 POLICIES -->
+                        <option value="ldap-admin">LDAP Admin</option>
+                        <option value="rabbitmq-admin">RabbitMQ Admin</option>
+                        <option value="consul-admin">Consul Admin</option>
+                        <option value="nomad-admin">Nomad Admin</option>
                     </select>
                 </div>
                 <div>
@@ -320,6 +330,99 @@
             </aside>
         </div>
 
+        <!-- NEW: SSH Secret Engine -->
+        <div id="sshWorkspace" class="vault-box hidden">
+            <h2>🛡️ SSH Secret Engine</h2>
+            <div class="grid">
+                <div>
+                    <label>SSH Username</label>
+                    <input id="sshUser" type="text" placeholder="ubuntu" value="ubuntu" />
+                </div>
+                <div class="btn-row">
+                    <button onclick="sshSignKey()">Sign SSH Key</button>
+                </div>
+            </div>
+            <div id="sshResult" class="result"></div>
+            <aside class="explain-box"><p id="sshExplainText">Generate short-lived signed SSH certificates.</p></aside>
+        </div>
+
+        <!-- NEW: Azure Secret Engine -->
+        <div id="azureWorkspace" class="vault-box hidden">
+            <h2>☁️ Azure Secret Engine</h2>
+            <div class="grid">
+                <div>
+                    <label>Azure Role</label>
+                    <input id="azureRole" type="text" placeholder="contributor" value="contributor" />
+                </div>
+                <div class="btn-row">
+                    <button onclick="azureGenCreds()">Generate SP Creds</button>
+                </div>
+            </div>
+            <div id="azureResult" class="result"></div>
+            <aside class="explain-box"><p id="azureExplainText">Generate dynamic Azure Service Principal credentials.</p></aside>
+        </div>
+
+        <!-- NEW: Active Directory Secret Engine -->
+        <div id="adWorkspace" class="vault-box hidden">
+            <h2>🏢 Active Directory Engine</h2>
+            <div class="grid">
+                <div>
+                    <label>AD Role</label>
+                    <input id="adRole" type="text" placeholder="domain-admins" value="domain-admins" />
+                </div>
+                <div class="btn-row">
+                    <button onclick="adGenCreds()">Generate AD Password</button>
+                </div>
+            </div>
+            <div id="adResult" class="result"></div>
+            <aside class="explain-box"><p id="adExplainText">Dynamically rotate Active Directory accounts.</p></aside>
+        </div>
+
+        <!-- NEW: TOTP Secret Engine -->
+        <div id="totpWorkspace" class="vault-box hidden">
+            <h2>⏱️ TOTP Secret Engine</h2>
+            <div class="grid">
+                <div>
+                    <label>Key Name</label>
+                    <input id="totpName" type="text" placeholder="my-app" value="my-app" />
+                </div>
+                <div class="btn-row">
+                    <button onclick="totpGenerate()">Generate Code</button>
+                </div>
+            </div>
+            <div id="totpResult" class="result"></div>
+            <aside class="explain-box"><p id="totpExplainText">Vault generates Time-Based One-Time Passwords.</p></aside>
+        </div>
+
+        <!-- THE FINAL 4 WORKSPACES -->
+        <div id="ldapWorkspace" class="vault-box hidden">
+            <h2>📇 LDAP Secret Engine</h2>
+            <div class="btn-row"><button onclick="ldapGenCreds()">Generate LDAP Credentials</button></div>
+            <div id="ldapResult" class="result"></div>
+            <aside class="explain-box"><p id="ldapExplainText">Dynamically generate LDAP credentials.</p></aside>
+        </div>
+
+        <div id="rabbitmqWorkspace" class="vault-box hidden">
+            <h2>🐇 RabbitMQ Secret Engine</h2>
+            <div class="btn-row"><button onclick="rmqGenCreds()">Generate MQ Credentials</button></div>
+            <div id="rmqResult" class="result"></div>
+            <aside class="explain-box"><p id="rmqExplainText">Generate dynamic RabbitMQ users and vhost permissions.</p></aside>
+        </div>
+
+        <div id="consulWorkspace" class="vault-box hidden">
+            <h2>🤝 Consul Secret Engine</h2>
+            <div class="btn-row"><button onclick="consulGenToken()">Generate Consul Token</button></div>
+            <div id="consulResult" class="result"></div>
+            <aside class="explain-box"><p id="consulExplainText">Generate short-lived Consul ACL tokens.</p></aside>
+        </div>
+
+        <div id="nomadWorkspace" class="vault-box hidden">
+            <h2>🚀 Nomad Secret Engine</h2>
+            <div class="btn-row"><button onclick="nomadGenToken()">Generate Nomad Token</button></div>
+            <div id="nomadResult" class="result"></div>
+            <aside class="explain-box"><p id="nomadExplainText">Generate temporary Nomad ACL tokens.</p></aside>
+        </div>
+
     </div>
 
 <!-- NEW: Link the categorized JS files -->
@@ -327,11 +430,12 @@
 <script src="transit.js"></script>
 <script src="pki.js"></script>
 <script src="database.js"></script>
+<script src="transform.js"></script>
 <script src="aws.js"></script>
 <script src="gcp.js"></script>
-<script src="transform.js"></script>
 <script src="kmip.js"></script>
 <script src="kubernetes.js"></script>
+<script src="extra-engines.js"></script>
 <script src="script.js"></script>
 </body>
 </html>
