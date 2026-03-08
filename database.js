@@ -4,6 +4,12 @@ function resetDatabase() {
   const resultEl = document.getElementById("dbResult");
   if (resultEl) resultEl.innerText = "";
   updateDbExplain("Select an action to see how Vault generates dynamic DB credentials.");
+
+  // Hide and stop video
+  const vidBox = document.getElementById("dbVideoBox");
+  const vid = document.getElementById("dbVideo");
+  if (vidBox) vidBox.classList.add("hidden");
+  if (vid) { vid.pause(); vid.currentTime = 0; }
 }
 
 function updateDbExplain(text) {
@@ -35,6 +41,12 @@ function dbGenerateCreds() {
   setDbResult(`SUCCESS: Generated Dynamic Credentials\nRole: ${role}\nUsername: ${username}\nPassword: ${password}\nTTL: 1h (Vault will auto-revoke this user in 1 hour)`);
   
   updateDbExplain(`<strong>GENERATE CREDS:</strong> Vault connected to the database and executed a SQL statement to create a brand new user (<code>${username}</code>). Vault tracks this user and will automatically drop the user from the database when the TTL expires.`);
+
+  // Reveal and play video
+  const vidBox = document.getElementById("dbVideoBox");
+  const vid = document.getElementById("dbVideo");
+  if (vidBox) vidBox.classList.remove("hidden");
+  if (vid) vid.play();
 }
 // Helper to reuse the result box styling
 function setPkiResult(message) {

@@ -8,6 +8,12 @@ function resetKv() {
   const resultEl = document.getElementById("kvResult");
   if (resultEl) resultEl.innerText = "";
   updateExplain("Select an action to see how Vault processes it under the hood.");
+
+  // NEW: Hide and stop video
+  const vidBox = document.getElementById("kvVideoBox");
+  const vid = document.getElementById("kvVideo");
+  if (vidBox) vidBox.classList.add("hidden");
+  if (vid) { vid.pause(); vid.currentTime = 0; }
 }
 
 function canUseKv(writeNeeded = false) {
@@ -61,6 +67,13 @@ function setKvResult(message) {
   }
 }
 
+function playKvVideo() {
+  const vidBox = document.getElementById("kvVideoBox");
+  const vid = document.getElementById("kvVideo");
+  if (vidBox) vidBox.classList.remove("hidden");
+  if (vid) vid.play();
+}
+
 function kvPut() {
   if (!canUseKv(true)) return;
   const { path, key, value } = getKvInputs();
@@ -84,6 +97,7 @@ function kvPut() {
   setKvResult(`PUT success → secret/data/${path} | version=${version} | data=${JSON.stringify(latestData)}`);
   clearKvInputs();
   updateExplain(`<strong>PUT:</strong> Created a new version (v${version}) of the secret. If previous data existed, it was carried over and updated with the new key/value.`);
+  playKvVideo();
 }
 
 function kvPatch() {
@@ -112,6 +126,7 @@ function kvPatch() {
   setKvResult(`PATCH success → secret/data/${path} | version=${version} | data=${JSON.stringify(patched)}`);
   clearKvInputs();
   updateExplain(`<strong>PATCH:</strong> Updated specific keys in the secret and generated a new version (v${version}) without overwriting unmentioned keys.`);
+  playKvVideo();
 }
 
 function kvRead() {
@@ -138,6 +153,7 @@ function kvRead() {
 
   setKvResult(`READ success → secret/data/${path} | version=${latest.version} | data=${JSON.stringify(latest.data)}`);
   updateExplain(`<strong>READ:</strong> Fetched the latest active version (v${latest.version}) of the secret. Vault checks your policy to ensure you have 'read' access to this path.`);
+  playKvVideo();
 }
 
 function kvSoftDelete() {
@@ -151,6 +167,7 @@ function kvSoftDelete() {
   latest.deleted = true;
   setKvResult(`SOFT DELETE success → secret/data/${path} | version=${latest.version} marked as deleted.`);
   updateExplain(`<strong>SOFT DELETE:</strong> Marked version ${latest.version} as deleted. The data is hidden from normal reads but still exists and can be recovered using Undelete.`);
+  playKvVideo();
 }
 
 function kvUndelete() {
@@ -168,6 +185,7 @@ function kvUndelete() {
   latest.deleted = false;
   setKvResult(`UNDELETE success → secret/data/${path} | version=${latest.version} restored.`);
   updateExplain(`<strong>UNDELETE:</strong> Restored the soft-deleted version ${latest.version}. It is now accessible again for read operations.`);
+  playKvVideo();
 }
 
 function kvDestroy() {
@@ -182,4 +200,5 @@ function kvDestroy() {
   latest.data = {}; 
   setKvResult(`DESTROY success → secret/data/${path} | version=${latest.version} permanently removed.`);
   updateExplain(`<strong>DESTROY:</strong> Permanently wiped the data for version ${latest.version}. This action is irreversible and the data cannot be recovered.`);
+  playKvVideo();
 }

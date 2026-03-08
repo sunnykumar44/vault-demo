@@ -4,6 +4,12 @@ function resetExtra() {
         const el = document.getElementById(id);
         if (el) { el.textContent = ""; el.style.display = "none"; }
     });
+
+    // Hide TOTP video
+    const vidBox = document.getElementById("totpVideoBox");
+    const vid = document.getElementById("totpVideo");
+    if (vidBox) vidBox.classList.add("hidden");
+    if (vid) { vid.pause(); vid.currentTime = 0; }
 }
 
 function showExtraResult(id, text) {
@@ -73,6 +79,12 @@ function totpGenerate() {
     
     showExtraResult("totpResult", `SUCCESS: Generated Authenticator Code\nKey Name: ${name}\nCode: ${code}\nValid For: 30s`);
     document.getElementById("totpExplainText").innerHTML = `<strong>TOTP:</strong> Vault acts securely as an authenticator app (like Google Authenticator), generating a strict Time-Based One-Time Password for programmatic multi-factor authentication.`;
+
+    // Reveal and play video
+    const vidBox = document.getElementById("totpVideoBox");
+    const vid = document.getElementById("totpVideo");
+    if (vidBox) vidBox.classList.remove("hidden");
+    if (vid) vid.play();
 }
 
 // 5. LDAP Engine

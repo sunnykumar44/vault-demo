@@ -2,6 +2,12 @@ function resetAws() {
   // Clear AWS-specific fields and results
   document.getElementById("awsRole").value = "readonly-role";
   const r = document.getElementById("awsResult"); if (r) r.textContent = "";
+  
+  // Hide and stop video
+  const vidBox = document.getElementById("awsVideoBox");
+  const vid = document.getElementById("awsVideo");
+  if (vidBox) vidBox.classList.add("hidden");
+  if (vid) { vid.pause(); vid.currentTime = 0; }
 }
 
 function awsGenerateCreds() {
@@ -24,4 +30,10 @@ lease_duration     1h`;
   if (explainEl) {
       explainEl.innerHTML = `<strong>AWS:</strong> Vault connected to AWS IAM and successfully generated dynamic, temporary credentials for the <code>${role}</code> role. Vault will automatically revoke these in 1 hour.`;
   }
+
+  // Reveal and play video
+  const vidBox = document.getElementById("awsVideoBox");
+  const vid = document.getElementById("awsVideo");
+  if (vidBox) vidBox.classList.remove("hidden");
+  if (vid) vid.play();
 }

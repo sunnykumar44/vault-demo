@@ -129,6 +129,13 @@
 
             <div id="kvResult" class="result"></div>
 
+            <!-- NEW: KV Video Box -->
+            <div id="kvVideoBox" class="hidden" style="margin-top: 20px; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                <video id="kvVideo" width="100%" controls>
+                    <source src="kv.mp4" type="video/mp4">
+                </video>
+            </div>
+
             <aside class="explain-box">
                 <h3>💡 What’s happening?</h3>
                 <p id="kvExplainText">Select an action to see how Vault processes it under the hood.</p>
@@ -235,6 +242,13 @@
 
             <div id="dbResult" class="result"></div>
 
+            <!-- NEW: Database Video Box -->
+            <div id="dbVideoBox" class="hidden" style="margin-top: 20px; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                <video id="dbVideo" width="100%" controls>
+                    <source src="db.mp4" type="video/mp4">
+                </video>
+            </div>
+
             <aside class="explain-box">
                 <h3>💡 What’s happening?</h3>
                 <p id="dbExplainText">Select an action to see how Vault generates dynamic DB credentials.</p>
@@ -254,6 +268,14 @@
                 </div>
             </div>
             <div id="awsResult" class="result"></div>
+            
+            <!-- NEW: AWS Video Box -->
+            <div id="awsVideoBox" class="hidden" style="margin-top: 20px; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                <video id="awsVideo" width="100%" controls>
+                    <source src="aws.mp4" type="video/mp4">
+                </video>
+            </div>
+
             <aside class="explain-box"><p id="awsExplainText">Generate temporary IAM-style credentials.</p></aside>
         </div>
 
@@ -412,6 +434,14 @@
                 </div>
             </div>
             <div id="totpResult" class="result"></div>
+            
+            <!-- NEW: TOTP Video Box -->
+            <div id="totpVideoBox" class="hidden" style="margin-top: 20px; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                <video id="totpVideo" width="100%" controls>
+                    <source src="totp.mp4" type="video/mp4">
+                </video>
+            </div>
+
             <aside class="explain-box"><p id="totpExplainText">Vault generates Time-Based One-Time Passwords.</p></aside>
         </div>
 
