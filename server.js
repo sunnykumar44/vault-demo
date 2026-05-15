@@ -220,13 +220,13 @@ if (!oidcDebugState.envVars.COOKIE_SECRET) {
  * Flags:
  * - httpOnly: JavaScript cannot access (protects from XSS)
  * - secure: Only sent over HTTPS (essential in production)
- * - sameSite: 'strict' prevents CSRF by restricting cross-site requests
+ * - sameSite: 'none' allows Vault -> app cross-site redirects to carry cookies
  * - maxAge: 10 minutes (authorization flow should complete quickly)
  */
 const OIDC_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict',
+  secure: process.env.NODE_ENV === 'production' || process.env.VERCEL === '1',
+  sameSite: 'none',
   maxAge: 10 * 60 * 1000 // 10 minutes
 };
 
@@ -725,6 +725,7 @@ app.get('/callback', async (req, res) => {
     const { code, state } = req.query;
     console.error('📨 /callback received request');
     console.error('   Full callback query:', req.query);
+    console.error('   Incoming cookie header:', req.headers.cookie || '(none)');
     console.error('   Query parameters present:', {
       hasCode: Boolean(code),
       hasState: Boolean(state),
@@ -754,6 +755,8 @@ app.get('/callback', async (req, res) => {
       oauth_state: Boolean(cookieState),
       oauth_verifier: Boolean(cookieVerifier)
     });
+    console.error('   Expected state value:', cookieState || '(missing)');
+    console.error('   Received state value:', state || '(missing)');
 
     // Validate we received authorization code
     if (!code) {
