@@ -1007,6 +1007,9 @@ app.get('/callback', async (req, res) => {
     console.error('   Redirect URI for callback exchange:', process.env.REDIRECT_URI);
     console.error('   callbackParams parsed:', params);
     const callbackOptions = {};
+    if (cookieState) {
+      callbackOptions.state = cookieState;
+    }
     if (cookieVerifier) {
       callbackOptions.code_verifier = cookieVerifier;
     }
