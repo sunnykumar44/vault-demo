@@ -2,12 +2,6 @@
   "version": 2,
   "buildCommand": "npm install",
   "devCommand": "npm run dev",
-  "functions": {
-    "server.js": {
-      "runtime": "nodejs22.x",
-      "maxDuration": 30
-    }
-  },
   "routes": [
     {
       "src": "/public/(.*)",
@@ -18,7 +12,7 @@
     },
     {
       "src": "/(.*)",
-      "dest": "/server.js"
+      "dest": "/api/index.js"
     }
   ]
 }

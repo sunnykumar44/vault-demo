@@ -982,11 +982,13 @@ async function startServer() {
   }
 }
 
-// Start in local development
-startServer().catch(error => {
-  console.error('Fatal error:', error);
-  process.exit(1);
-});
+// Start only when running locally. Vercel loads this file as a serverless handler.
+if (!process.env.VERCEL && require.main === module) {
+  startServer().catch(error => {
+    console.error('Fatal error:', error);
+    process.exit(1);
+  });
+}
 
 // ================================================================================
 // EXPORT FOR VERCEL
