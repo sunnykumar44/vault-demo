@@ -347,6 +347,22 @@ async function getOIDCClient() {
  * - Signed cookies: Tamper-proof across serverless instances
  */
 app.get('/login', async (req, res) => {
+  if (!authConfigReady) {
+    console.error('❌ /login requested without required OIDC environment variables');
+    return res.status(503).send(`
+      <h1>OIDC login is not configured</h1>
+      <p>This deployment is missing the required Vercel environment variables.</p>
+      <p>Set these in your Vercel project settings, then redeploy:</p>
+      <ul>
+        <li>VAULT_ISSUER_URL</li>
+        <li>CLIENT_ID</li>
+        <li>CLIENT_SECRET</li>
+        <li>REDIRECT_URI</li>
+        <li>COOKIE_SECRET</li>
+      </ul>
+    `);
+  }
+
   try {
     const client = await getOIDCClient();
     /**
