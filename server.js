@@ -118,6 +118,91 @@ if (missingEnvVars.length > 0) {
   console.warn('⚠️  OIDC authentication is disabled until the missing variables are configured.');
 }
 
+function getEnvVarStatus() {
+  return requiredEnvVars.reduce((status, envVarName) => {
+    status[envVarName] = Boolean(process.env[envVarName]);
+    return status;
+  }, {});
+}
+
+function formatErrorDetails(error) {
+  if (!error) {
+    return null;
+  }
+
+  return {
+    name: error.name,
+    message: error.message,
+    code: error.code,
+    stack: error.stack,
+    cause: error.cause ? formatErrorDetails(error.cause) : undefined,
+    responseBody: error.response?.body,
+    responseStatus: error.response?.status,
+    responseHeaders: error.response?.headers
+  };
+}
+
+function isTlsOrCertificateError(error) {
+  const tlsCodes = new Set([
+    'DEPTH_ZERO_SELF_SIGNED_CERT',
+    'SELF_SIGNED_CERT_IN_CHAIN',
+    'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+    'CERT_HAS_EXPIRED',
+    'UNABLE_TO_GET_ISSUER_CERT',
+    'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+    'ERR_TLS_CERT_ALTNAME_INVALID'
+  ]);
+
+  const errorText = `${error?.message || ''} ${error?.code || ''}`.toLowerCase();
+  return tlsCodes.has(error?.code) || errorText.includes('tls') || errorText.includes('certificate') || errorText.includes('self signed');
+}
+
+function logDetailedError(context, error, extra = {}) {
+  console.error(`❌ ${context}`);
+  if (Object.keys(extra).length > 0) {
+    console.error('   Context:', extra);
+  }
+  console.error('   Error details:', formatErrorDetails(error));
+
+  if (isTlsOrCertificateError(error)) {
+    console.error('   TLS/certificate validation failure detected.');
+    console.error('   If Vault uses a self-signed certificate, the Node runtime must trust the certificate chain.');
+  }
+}
+
+const oidcDebugState = {
+  issuerUrl: process.env.VAULT_ISSUER_URL || null,
+  envVars: getEnvVarStatus(),
+  discoverySucceeded: false,
+  clientInitialized: false,
+  initializationAttempts: 0,
+  lastInitializationError: null,
+  lastDiscoveryError: null,
+  lastClientError: null,
+  lastSuccessAt: null,
+  lastRedirectUrl: null
+};
+
+console.error('🔎 OIDC environment variable validation on startup:');
+Object.entries(oidcDebugState.envVars).forEach(([envVarName, exists]) => {
+  console.error(`   ${envVarName}: ${exists ? 'present' : 'missing'}`);
+});
+if (!oidcDebugState.envVars.VAULT_ISSUER_URL) {
+  console.error('   VAULT_ISSUER_URL is missing; Vault discovery cannot start.');
+}
+if (!oidcDebugState.envVars.CLIENT_ID) {
+  console.error('   CLIENT_ID is missing; openid-client setup cannot complete.');
+}
+if (!oidcDebugState.envVars.CLIENT_SECRET) {
+  console.error('   CLIENT_SECRET is missing; openid-client setup cannot complete.');
+}
+if (!oidcDebugState.envVars.REDIRECT_URI) {
+  console.error('   REDIRECT_URI is missing; redirect URL generation cannot complete.');
+}
+if (!oidcDebugState.envVars.COOKIE_SECRET) {
+  console.error('   COOKIE_SECRET is missing; cookie creation and verification will fail.');
+}
+
 /**
  * Cookie configuration for OIDC flow state
  * 
@@ -249,19 +334,36 @@ let initPromise = null;
  * - Missing VAULT_ISSUER_URL → process.env check catches it earlier
  */
 async function initializeOIDC() {
+  oidcDebugState.initializationAttempts += 1;
+  oidcDebugState.issuerUrl = process.env.VAULT_ISSUER_URL || null;
+  oidcDebugState.envVars = getEnvVarStatus();
+
   if (!authConfigReady) {
-    throw new Error(`OIDC auth is disabled because these environment variables are missing: ${missingEnvVars.join(', ')}`);
+    const error = new Error(`OIDC auth is disabled because these environment variables are missing: ${missingEnvVars.join(', ')}`);
+    oidcDebugState.lastInitializationError = formatErrorDetails(error);
+    logDetailedError('OIDC initialization aborted because required environment variables are missing', error, {
+      missingEnvVars
+    });
+    throw error;
   }
 
   try {
-    console.log('🔐 Discovering OIDC configuration from Vault...');
-    console.log(`   Issuer: ${process.env.VAULT_ISSUER_URL}`);
+    console.error('🔐 Starting OIDC initialization and Vault discovery');
+    console.error(`   Issuer URL: ${process.env.VAULT_ISSUER_URL}`);
+    console.error(`   Redirect URI: ${process.env.REDIRECT_URI}`);
+    console.error(`   Client ID present: ${Boolean(process.env.CLIENT_ID)}`);
+    console.error(`   Client Secret present: ${Boolean(process.env.CLIENT_SECRET)}`);
+
+    oidcDebugState.lastDiscoveryError = null;
+    oidcDebugState.lastClientError = null;
 
     const issuer = await Issuer.discover(process.env.VAULT_ISSUER_URL);
 
-    console.log(`✅ Discovered issuer: ${issuer.issuer}`);
-    console.log(`   Authorization endpoint: ${issuer.authorization_endpoint}`);
-    console.log(`   Token endpoint: ${issuer.token_endpoint}`);
+    oidcDebugState.discoverySucceeded = true;
+    console.error(`✅ Discovered issuer: ${issuer.issuer}`);
+    console.error(`   Authorization endpoint: ${issuer.authorization_endpoint}`);
+    console.error(`   Token endpoint: ${issuer.token_endpoint}`);
+    console.error(`   JWKS endpoint: ${issuer.jwks_uri}`);
 
     /**
      * Create OIDC Client
@@ -281,15 +383,35 @@ async function initializeOIDC() {
       response_types: ['code']
     });
 
-    console.log('✅ OIDC client initialized successfully\n');
+    oidcDebugState.clientInitialized = true;
+    oidcDebugState.lastSuccessAt = new Date().toISOString();
+    console.error('✅ OIDC client initialized successfully');
+    console.error(`   Registered redirect URI: ${process.env.REDIRECT_URI}`);
+    console.error(`   Client initialized: ${Boolean(oidcClient)}`);
     return oidcClient;
   } catch (error) {
-    console.error('❌ Failed to initialize OIDC client:', error.message);
-    console.error('\nTroubleshooting:');
-    console.error('  1. Ensure Vault is running and accessible');
-    console.error('  2. Verify VAULT_ISSUER_URL is correct');
-    console.error('  3. Check network connectivity to Vault');
-    console.error('  4. For self-signed certificates, may need NODE_TLS_REJECT_UNAUTHORIZED=0 (dev only!)');
+    oidcDebugState.discoverySucceeded = false;
+    oidcDebugState.clientInitialized = false;
+    oidcDebugState.lastInitializationError = formatErrorDetails(error);
+
+    if (error.message?.includes('.well-known') || error.message?.includes('issuer') || error.message?.includes('discover')) {
+      oidcDebugState.lastDiscoveryError = formatErrorDetails(error);
+    } else {
+      oidcDebugState.lastClientError = formatErrorDetails(error);
+    }
+
+    logDetailedError('Failed to initialize OIDC client', error, {
+      issuerUrl: process.env.VAULT_ISSUER_URL,
+      redirectUri: process.env.REDIRECT_URI,
+      clientIdPresent: Boolean(process.env.CLIENT_ID),
+      clientSecretPresent: Boolean(process.env.CLIENT_SECRET)
+    });
+
+    console.error('   Troubleshooting steps:');
+    console.error('   1. Ensure Vault is running and accessible');
+    console.error('   2. Verify VAULT_ISSUER_URL is correct');
+    console.error('   3. Check network connectivity to Vault');
+    console.error('   4. If Vault uses a self-signed certificate, confirm the runtime trusts the certificate chain');
     throw error;
   }
 }
@@ -315,11 +437,15 @@ async function initializeOIDC() {
  */
 async function getOIDCClient() {
   if (oidcClient) {
+    console.error('♻️ Reusing cached OIDC client');
     return oidcClient;
   }
 
   if (!initPromise) {
+    console.error('🧭 No cached OIDC client found; starting initialization');
     initPromise = initializeOIDC();
+  } else {
+    console.error('⏳ OIDC initialization already in progress; awaiting existing promise');
   }
 
   return await initPromise;
@@ -349,6 +475,7 @@ async function getOIDCClient() {
 app.get('/login', async (req, res) => {
   if (!authConfigReady) {
     console.error('❌ /login requested without required OIDC environment variables');
+    console.error('   Environment status:', getEnvVarStatus());
     return res.status(503).send(`
       <h1>OIDC login is not configured</h1>
       <p>This deployment is missing the required Vercel environment variables.</p>
@@ -475,8 +602,22 @@ app.get('/login', async (req, res) => {
      * - Cookie: Stored on browser → Browser sends with every request
      * - Cookie signed: Can't be tampered with (signature verified on any instance)
      */
-    res.cookie('oauth_state', state, OIDC_COOKIE_OPTIONS);
-    res.cookie('oauth_verifier', codeVerifier, OIDC_COOKIE_OPTIONS);
+    try {
+      console.error('🍪 Creating OIDC flow cookies');
+      console.error(`   oauth_state length: ${state.length}`);
+      console.error(`   oauth_verifier length: ${codeVerifier.length}`);
+      res.cookie('oauth_state', state, OIDC_COOKIE_OPTIONS);
+      res.cookie('oauth_verifier', codeVerifier, OIDC_COOKIE_OPTIONS);
+    } catch (cookieError) {
+      logDetailedError('Failed to create OIDC cookies', cookieError, {
+        stateLength: state.length,
+        verifierLength: codeVerifier.length
+      });
+      return res.status(500).json({
+        error: 'Failed to initiate login',
+        details: process.env.NODE_ENV === 'development' ? cookieError.message : undefined
+      });
+    }
 
     /**
      * Build Authorization URL
@@ -505,12 +646,46 @@ app.get('/login', async (req, res) => {
       state: state
     });
 
-    console.log('📍 Redirecting user to Vault authorization endpoint');
+    oidcDebugState.lastRedirectUrl = authorizationUrl;
+    console.error('📍 Redirecting user to Vault authorization endpoint');
+    console.error(`   Authorization URL: ${authorizationUrl}`);
+    console.error(`   Redirect URI used: ${process.env.REDIRECT_URI}`);
     res.redirect(authorizationUrl);
   } catch (error) {
-    console.error('❌ Error in /login:', error.message);
+    logDetailedError('Error in /login', error, {
+      issuerUrl: process.env.VAULT_ISSUER_URL,
+      redirectUri: process.env.REDIRECT_URI
+    });
     res.status(500).json({
       error: 'Failed to initiate login',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+app.get('/debug/oidc', (req, res) => {
+  try {
+    const payload = {
+      issuerUrl: process.env.VAULT_ISSUER_URL || null,
+      discoverySucceeded: oidcDebugState.discoverySucceeded,
+      clientInitialized: Boolean(oidcClient),
+      envVars: getEnvVarStatus(),
+      initializationAttempts: oidcDebugState.initializationAttempts,
+      lastSuccessAt: oidcDebugState.lastSuccessAt,
+      lastRedirectUrl: oidcDebugState.lastRedirectUrl,
+      initializationError: oidcDebugState.lastInitializationError,
+      discoveryError: oidcDebugState.lastDiscoveryError,
+      clientError: oidcDebugState.lastClientError
+    };
+
+    console.error('🔎 /debug/oidc requested');
+    console.error('   Debug payload:', payload);
+
+    return res.json(payload);
+  } catch (error) {
+    logDetailedError('Error in /debug/oidc', error);
+    return res.status(500).json({
+      error: 'Failed to load OIDC debug state',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
@@ -541,6 +716,11 @@ app.get('/callback', async (req, res) => {
   try {
     const client = await getOIDCClient();
     const { code, state } = req.query;
+    console.error('📨 /callback received request');
+    console.error('   Query parameters present:', {
+      hasCode: Boolean(code),
+      hasState: Boolean(state)
+    });
 
     /**
      * Retrieve PKCE and CSRF tokens from signed cookies
@@ -560,6 +740,10 @@ app.get('/callback', async (req, res) => {
      */
     const cookieState = req.signedCookies.oauth_state;
     const cookieVerifier = req.signedCookies.oauth_verifier;
+    console.error('   Signed cookies present:', {
+      oauth_state: Boolean(cookieState),
+      oauth_verifier: Boolean(cookieVerifier)
+    });
 
     // Validate we received authorization code
     if (!code) {
@@ -664,6 +848,9 @@ app.get('/callback', async (req, res) => {
      * - Authorization code used only once
      */
     const params = client.callbackParams(req);
+    console.error('🔁 Exchanging authorization code for tokens');
+    console.error('   Redirect URI for callback exchange:', process.env.REDIRECT_URI);
+    console.error('   callbackParams parsed:', params);
     const tokenSet = await client.callback(
       process.env.REDIRECT_URI,
       params,
@@ -672,7 +859,7 @@ app.get('/callback', async (req, res) => {
       }
     );
 
-    console.log('✅ Successfully exchanged authorization code for tokens');
+    console.error('✅ Successfully exchanged authorization code for tokens');
 
     /**
      * Decode and Validate ID Token
@@ -711,8 +898,8 @@ app.get('/callback', async (req, res) => {
      */
     const userInfo = tokenSet.claims();
 
-    console.log(`✅ User authenticated: ${userInfo.email || userInfo.sub}`);
-    console.log('✅ ID token signature verified (token is legitimate and from Vault)');
+    console.error(`✅ User authenticated: ${userInfo.email || userInfo.sub}`);
+    console.error('✅ ID token signature verified (token is legitimate and from Vault)');
 
     /**
      * Store Authenticated User in Signed Cookie
@@ -758,15 +945,26 @@ app.get('/callback', async (req, res) => {
      * - Secure: Only sent over HTTPS
      * - SameSite=strict: Prevents CSRF
      */
-    res.cookie(
-      'auth',
-      JSON.stringify({
-        user: userInfo,
-        id_token: tokenSet.id_token,
-        access_token: tokenSet.access_token
-      }),
-      AUTH_COOKIE_OPTIONS
-    );
+    try {
+      console.error('🍪 Creating authenticated session cookie');
+      res.cookie(
+        'auth',
+        JSON.stringify({
+          user: userInfo,
+          id_token: tokenSet.id_token,
+          access_token: tokenSet.access_token
+        }),
+        AUTH_COOKIE_OPTIONS
+      );
+    } catch (cookieError) {
+      logDetailedError('Failed to create authenticated session cookie', cookieError, {
+        user: userInfo?.email || userInfo?.sub || null
+      });
+      return res.status(500).json({
+        error: 'Failed to process authentication',
+        details: process.env.NODE_ENV === 'development' ? cookieError.message : undefined
+      });
+    }
 
     /**
      * Clear temporary OIDC flow cookies
@@ -789,10 +987,14 @@ app.get('/callback', async (req, res) => {
      * 4. See auth cookie present
      * 5. Display user profile and secret engines
      */
-    console.log('📍 Redirecting to home page\n');
+    console.error('📍 Redirecting to home page');
     res.redirect('/');
   } catch (error) {
-    console.error('❌ Error in /callback:', error.message);
+    logDetailedError('Error in /callback', error, {
+      issuerUrl: process.env.VAULT_ISSUER_URL,
+      redirectUri: process.env.REDIRECT_URI,
+      hasAuthConfig: authConfigReady
+    });
     if (error.response?.body) {
       console.error('   Vault response:', error.response.body);
     }
@@ -944,7 +1146,10 @@ app.get('*', (req, res) => {
  * Prevents server crashes and gives meaningful error messages
  */
 app.use((err, req, res, next) => {
-  console.error('❌ Unhandled error:', err);
+  logDetailedError('Unhandled error', err, {
+    method: req.method,
+    url: req.originalUrl
+  });
   res.status(500).json({
     error: 'Internal server error',
     details: process.env.NODE_ENV === 'development' ? err.message : undefined
@@ -972,10 +1177,12 @@ async function startServer() {
   try {
     // Initialize OIDC client only when auth configuration is present.
     // This keeps the static demo available on Vercel even if env vars are not set yet.
+    console.error('🚀 Starting server initialization');
+    console.error('   Environment status at startup:', getEnvVarStatus());
     if (authConfigReady) {
       await getOIDCClient();
     } else {
-      console.warn('⚠️  Starting without OIDC client because auth env vars are missing.');
+      console.error('⚠️  Starting without OIDC client because auth env vars are missing.');
     }
 
     app.listen(PORT, () => {
@@ -1003,7 +1210,7 @@ async function startServer() {
       `);
     });
   } catch (error) {
-    console.error('❌ Failed to start server:', error);
+    logDetailedError('Failed to start server', error);
     process.exit(1);
   }
 }
@@ -1011,7 +1218,7 @@ async function startServer() {
 // Start only when running locally. Vercel loads this file as a serverless handler.
 if (!process.env.VERCEL && require.main === module) {
   startServer().catch(error => {
-    console.error('Fatal error:', error);
+    logDetailedError('Fatal startup error', error);
     process.exit(1);
   });
 }
