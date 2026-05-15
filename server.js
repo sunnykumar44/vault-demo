@@ -724,9 +724,12 @@ app.get('/callback', async (req, res) => {
     const client = await getOIDCClient();
     const { code, state } = req.query;
     console.error('📨 /callback received request');
+    console.error('   Full callback query:', req.query);
     console.error('   Query parameters present:', {
       hasCode: Boolean(code),
-      hasState: Boolean(state)
+      hasState: Boolean(state),
+      hasError: Boolean(req.query.error),
+      hasErrorDescription: Boolean(req.query.error_description)
     });
 
     /**
@@ -755,9 +758,16 @@ app.get('/callback', async (req, res) => {
     // Validate we received authorization code
     if (!code) {
       console.error('❌ No authorization code received from Vault');
+      if (req.query.error || req.query.error_description) {
+        console.error('   OIDC error returned by provider:', {
+          error: req.query.error,
+          error_description: req.query.error_description,
+          error_uri: req.query.error_uri
+        });
+      }
       return res.status(400).json({
         error: 'No authorization code',
-        details: 'Vault did not return an authorization code. User may have denied consent.'
+        details: req.query.error_description || 'Vault did not return an authorization code. User may have denied consent or the authorization request failed.'
       });
     }
 
