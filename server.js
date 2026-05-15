@@ -211,6 +211,7 @@ const oidcDebugState = {
   lastInitializationError: null,
   lastDiscoveryError: null,
   lastClientError: null,
+  lastCallbackError: null,
   lastSuccessAt: null,
   lastRedirectUrl: null
 };
@@ -777,7 +778,8 @@ app.get('/debug/oidc', (req, res) => {
       lastRedirectUrl: oidcDebugState.lastRedirectUrl,
       initializationError: oidcDebugState.lastInitializationError,
       discoveryError: oidcDebugState.lastDiscoveryError,
-      clientError: oidcDebugState.lastClientError
+      clientError: oidcDebugState.lastClientError,
+      callbackError: oidcDebugState.lastCallbackError
     };
 
     console.error('🔎 /debug/oidc requested');
@@ -1216,12 +1218,16 @@ app.get('/callback', async (req, res) => {
       redirectUri: process.env.REDIRECT_URI,
       hasAuthConfig: authConfigReady
     });
+    oidcDebugState.lastCallbackError = formatErrorDetails(error);
     if (error.response?.body) {
       console.error('   Vault response:', error.response.body);
     }
     res.status(500).json({
       error: 'Failed to process authentication',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details:
+        process.env.NODE_ENV === 'development'
+          ? error.message
+          : error.response?.body?.error_description || error.response?.body?.error || error.message
     });
   }
 });
