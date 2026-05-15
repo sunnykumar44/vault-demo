@@ -2,13 +2,6 @@
   "version": 2,
   "buildCommand": "npm install",
   "devCommand": "npm run dev",
-  "env": {
-    "VAULT_ISSUER_URL": "@vault_issuer_url",
-    "CLIENT_ID": "@client_id",
-    "CLIENT_SECRET": "@client_secret",
-    "REDIRECT_URI": "@redirect_uri",
-    "COOKIE_SECRET": "@cookie_secret"
-  },
   "functions": {
     "server.js": {
       "runtime": "@vercel/node@3.x",
