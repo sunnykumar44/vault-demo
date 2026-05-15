@@ -53,7 +53,8 @@ VAULT_ISSUER_URL=http://localhost:8200
 CLIENT_ID=vault-demo-app
 CLIENT_SECRET=demo-client-secret-12345
 REDIRECT_URI=http://localhost:3000/callback
-SESSION_SECRET=super-secret-session-key-min-32-chars
+COOKIE_SECRET=super-secret-cookie-key-min-32-chars
+# SESSION_SECRET also works as a fallback, but COOKIE_SECRET is preferred.
 PORT=3000
 NODE_ENV=development
 EOF

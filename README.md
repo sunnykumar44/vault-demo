@@ -77,11 +77,14 @@ cp .env.example .env
 
 # Edit .env with your settings
 # Required:
-#   - VAULT_ISSUER_URL: Your Vault address
+#   - VAULT_ISSUER_URL: Your Vault issuer URL. For the named OIDC provider,
+#     use the full provider path, for example:
+#     https://ekblz-122-175-58-209.run.pinggy-free.link/v1/identity/oidc/provider/default
 #   - CLIENT_ID: OIDC client ID from Vault
 #   - CLIENT_SECRET: OIDC client secret (keep secure!)
 #   - REDIRECT_URI: http://localhost:3000/callback (must match Vault config)
-#   - SESSION_SECRET: Random string for session signing
+#   - COOKIE_SECRET: Random string for signed cookie sessions
+#     (SESSION_SECRET is accepted as a compatibility fallback)
 ```
 
 ### 4. Start the Server
@@ -374,7 +377,7 @@ Additional recommendations:
 - [ ] Implement rate limiting on auth endpoints
 - [ ] Add audit logging for authentication events
 - [ ] Rotate client secrets regularly
-- [ ] Use strong SESSION_SECRET (min 32 characters)
+- [ ] Use strong COOKIE_SECRET (min 32 characters)
 - [ ] Implement token refresh if using long-lived tokens
 - [ ] Add logout notification to Vault (revoke tokens)
 
@@ -448,7 +451,7 @@ DEBUG=* npm start
 **Cause**: Session state doesn't match callback state  
 **Solution**:
 - Clear browser cookies and try again
-- Ensure SESSION_SECRET is set and consistent
+- Ensure COOKIE_SECRET is set and consistent
 - Check server and browser clocks are synchronized
 
 ### "Invalid state parameter"

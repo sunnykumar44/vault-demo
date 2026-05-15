@@ -112,10 +112,33 @@ const requiredEnvVars = [
   'CLIENT_ID',
   'CLIENT_SECRET',
   'REDIRECT_URI',
-  'COOKIE_SECRET'
 ];
 
+function getCookieSigningSecret() {
+  return process.env.COOKIE_SECRET || process.env.SESSION_SECRET || '';
+}
+
+function getIssuerDiscoveryCandidates() {
+  const configuredIssuer = (process.env.VAULT_ISSUER_URL || '').trim().replace(/\/+$/, '');
+  const providerName = (process.env.VAULT_OIDC_PROVIDER_NAME || 'default').trim();
+  const candidates = [];
+
+  if (configuredIssuer) {
+    candidates.push(configuredIssuer);
+
+    if (!configuredIssuer.includes('/v1/identity/oidc/provider/')) {
+      candidates.push(`${configuredIssuer}/v1/identity/oidc/provider/${providerName}`);
+    }
+  }
+
+  return [...new Set(candidates)];
+}
+
 const missingEnvVars = requiredEnvVars.filter(v => !process.env[v]);
+const cookieSigningSecret = getCookieSigningSecret();
+if (!cookieSigningSecret) {
+  missingEnvVars.push('COOKIE_SECRET or SESSION_SECRET');
+}
 const authConfigReady = missingEnvVars.length === 0;
 const demoModeEnabled = process.env.DEMO_MODE === 'true';
 
@@ -208,8 +231,10 @@ if (!oidcDebugState.envVars.CLIENT_SECRET) {
 if (!oidcDebugState.envVars.REDIRECT_URI) {
   console.error('   REDIRECT_URI is missing; redirect URL generation cannot complete.');
 }
-if (!oidcDebugState.envVars.COOKIE_SECRET) {
-  console.error('   COOKIE_SECRET is missing; cookie creation and verification will fail.');
+if (!cookieSigningSecret) {
+  console.error('   COOKIE_SECRET/SESSION_SECRET is missing; cookie creation and verification will fail.');
+} else {
+  console.error(`   Cookie signing secret source: ${process.env.COOKIE_SECRET ? 'COOKIE_SECRET' : 'SESSION_SECRET'}`);
 }
 console.error(`   DEMO_MODE: ${demoModeEnabled ? 'enabled' : 'disabled'}`);
 
@@ -325,7 +350,7 @@ app.use(express.json());
  * All instances can verify cookies signed by any other instance
  * This is why stateless cookies work on serverless!
  */
-app.use(cookieParser(process.env.COOKIE_SECRET));
+app.use(cookieParser(cookieSigningSecret || undefined));
 
 /**
  * Serve static files from public folder
@@ -406,6 +431,7 @@ async function initializeOIDC() {
   try {
     console.error('🔐 Starting OIDC initialization and Vault discovery');
     console.error(`   Issuer URL: ${process.env.VAULT_ISSUER_URL}`);
+    console.error(`   Discovery candidates: ${getIssuerDiscoveryCandidates().join(' -> ')}`);
     console.error(`   Redirect URI: ${process.env.REDIRECT_URI}`);
     console.error(`   Client ID present: ${Boolean(process.env.CLIENT_ID)}`);
     console.error(`   Client Secret present: ${Boolean(process.env.CLIENT_SECRET)}`);
@@ -413,7 +439,25 @@ async function initializeOIDC() {
     oidcDebugState.lastDiscoveryError = null;
     oidcDebugState.lastClientError = null;
 
-    const issuer = await Issuer.discover(process.env.VAULT_ISSUER_URL);
+    let issuer = null;
+    let lastDiscoveryError = null;
+
+    for (const issuerUrl of getIssuerDiscoveryCandidates()) {
+      try {
+        console.error(`   Trying discovery at: ${issuerUrl}`);
+        issuer = await Issuer.discover(issuerUrl);
+        oidcDebugState.issuerUrl = issuerUrl;
+        break;
+      } catch (error) {
+        lastDiscoveryError = error;
+        oidcDebugState.lastDiscoveryError = formatErrorDetails(error);
+        console.error(`   Discovery failed for: ${issuerUrl}`);
+      }
+    }
+
+    if (!issuer) {
+      throw lastDiscoveryError || new Error('Unable to discover Vault OIDC issuer');
+    }
 
     oidcDebugState.discoverySucceeded = true;
     console.error(`✅ Discovered issuer: ${issuer.issuer}`);
