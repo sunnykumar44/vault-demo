@@ -87,6 +87,7 @@ custom.setHttpOptionsDefaults({
 console.error('🔧 openid-client configured with X-Pinggy-No-Screen header for outbound OIDC requests');
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 
 // ================================================================================
