@@ -117,6 +117,7 @@ const requiredEnvVars = [
 
 const missingEnvVars = requiredEnvVars.filter(v => !process.env[v]);
 const authConfigReady = missingEnvVars.length === 0;
+const demoModeEnabled = process.env.DEMO_MODE === 'true';
 
 if (missingEnvVars.length > 0) {
   console.error('❌ Missing required environment variables:');
@@ -210,6 +211,7 @@ if (!oidcDebugState.envVars.REDIRECT_URI) {
 if (!oidcDebugState.envVars.COOKIE_SECRET) {
   console.error('   COOKIE_SECRET is missing; cookie creation and verification will fail.');
 }
+console.error(`   DEMO_MODE: ${demoModeEnabled ? 'enabled' : 'disabled'}`);
 
 function getOidcCookieDomain(req) {
   const configuredDomain = process.env.OIDC_COOKIE_DOMAIN;
@@ -845,6 +847,17 @@ app.get('/callback', async (req, res) => {
      * - Attack prevented ✅
      */
     if (!state || state !== cookieState) {
+      if (demoModeEnabled && code) {
+        console.error('#######################################################################');
+        console.error('### DEMO MODE WARNING: STATE VALIDATION BYPASSED FOR CONTROLLED DEMO  ###');
+        console.error('### NOT PRODUCTION SAFE                                              ###');
+        console.error('### State validation normally protects against CSRF attacks.         ###');
+        console.error('### This bypass exists only for controlled OIDC learning/demo setups. ###');
+        console.error('#######################################################################');
+        console.error('   Reason for bypass: browser did not return the signed OIDC state cookie');
+        console.error('   Expected state value:', cookieState || '(missing)');
+        console.error('   Received state value:', state || '(missing)');
+      } else {
       console.error('❌ State parameter mismatch - possible CSRF attack');
       console.error(`   Received from Vault: ${state}`);
       console.error(`   Stored in cookie: ${cookieState}`);
@@ -852,6 +865,7 @@ app.get('/callback', async (req, res) => {
         error: 'Invalid state parameter',
         details: 'State mismatch detected. This could indicate a CSRF attack.'
       });
+      }
     }
 
     /**
@@ -1048,6 +1062,65 @@ app.get('/callback', async (req, res) => {
     const oidcCookieOptions = buildOidcCookieOptions(req);
     res.clearCookie('oauth_state', oidcCookieOptions);
     res.clearCookie('oauth_verifier', oidcCookieOptions);
+
+    if (demoModeEnabled) {
+      console.error('🎓 DEMO_MODE active: returning learning page with decoded ID token claims');
+      const rawJwt = tokenSet.id_token || '';
+      const claimsJson = JSON.stringify(userInfo, null, 2);
+      const profileSummary = [
+        userInfo.email ? `<li><strong>Email:</strong> ${userInfo.email}</li>` : '',
+        userInfo.name ? `<li><strong>Name:</strong> ${userInfo.name}</li>` : '',
+        userInfo.preferred_username ? `<li><strong>Preferred Username:</strong> ${userInfo.preferred_username}</li>` : '',
+        userInfo.picture ? `<li><strong>Picture:</strong> ${userInfo.picture}</li>` : ''
+      ].join('');
+
+      return res.status(200).send(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>OIDC Demo Mode</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 0; padding: 32px; background: #0f172a; color: #e2e8f0; }
+            .card { max-width: 1100px; margin: 0 auto; background: #111827; border: 1px solid #334155; border-radius: 16px; padding: 24px; }
+            h1, h2 { margin-top: 0; }
+            .warning { background: #7f1d1d; border: 1px solid #ef4444; color: #fecaca; padding: 16px; border-radius: 12px; margin-bottom: 20px; }
+            .meta { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 20px; }
+            .meta div { background: #1e293b; padding: 12px; border-radius: 10px; }
+            pre { white-space: pre-wrap; word-break: break-word; background: #020617; color: #cbd5e1; padding: 16px; border-radius: 12px; overflow: auto; border: 1px solid #334155; }
+            code { color: #93c5fd; }
+            .actions a { display: inline-block; margin-right: 12px; margin-top: 12px; color: #fff; text-decoration: none; background: #2563eb; padding: 10px 14px; border-radius: 999px; }
+            ul { line-height: 1.7; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <div class="warning">
+              <strong>DEMO MODE ENABLED:</strong> state validation was bypassed only because the signed state cookie was not returned. This is <strong>not production safe</strong> and exists only for controlled OIDC learning/demo environments.
+            </div>
+            <h1>OIDC Demo Mode Token Details</h1>
+            <div class="meta">
+              <div><strong>Issuer</strong><br>${userInfo.iss || process.env.VAULT_ISSUER_URL || '(missing)'}</div>
+              <div><strong>Subject</strong><br>${userInfo.sub || '(missing)'}</div>
+              <div><strong>Email</strong><br>${userInfo.email || '(not present)'}</div>
+              <div><strong>Profile</strong><br>${userInfo.name || userInfo.preferred_username || '(not present)'}</div>
+            </div>
+            <h2>Decoded ID Token Claims</h2>
+            <pre>${claimsJson.replace(/</g, '&lt;')}</pre>
+            <h2>Raw JWT</h2>
+            <pre>${rawJwt.replace(/</g, '&lt;')}</pre>
+            <h2>Selected Profile Claims</h2>
+            <ul>${profileSummary || '<li>No profile claims were present.</li>'}</ul>
+            <div class="actions">
+              <a href="/">Continue to app</a>
+              <a href="/debug/oidc">View OIDC debug state</a>
+            </div>
+          </div>
+        </body>
+        </html>
+      `);
+    }
 
     /**
      * Redirect user home
