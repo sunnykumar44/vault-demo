@@ -108,13 +108,14 @@ const requiredEnvVars = [
 ];
 
 const missingEnvVars = requiredEnvVars.filter(v => !process.env[v]);
+const authConfigReady = missingEnvVars.length === 0;
 
 if (missingEnvVars.length > 0) {
   console.error('❌ Missing required environment variables:');
   missingEnvVars.forEach(v => console.error(`   - ${v}`));
   console.error('\nPlease copy .env.example to .env and fill in your Vault details.');
   console.error('Or set environment variables in Vercel dashboard.');
-  process.exit(1);
+  console.warn('⚠️  OIDC authentication is disabled until the missing variables are configured.');
 }
 
 /**
@@ -248,6 +249,10 @@ let initPromise = null;
  * - Missing VAULT_ISSUER_URL → process.env check catches it earlier
  */
 async function initializeOIDC() {
+  if (!authConfigReady) {
+    throw new Error(`OIDC auth is disabled because these environment variables are missing: ${missingEnvVars.join(', ')}`);
+  }
+
   try {
     console.log('🔐 Discovering OIDC configuration from Vault...');
     console.log(`   Issuer: ${process.env.VAULT_ISSUER_URL}`);
@@ -949,8 +954,13 @@ app.use((err, req, res, next) => {
  */
 async function startServer() {
   try {
-    // Initialize OIDC client
-    await getOIDCClient();
+    // Initialize OIDC client only when auth configuration is present.
+    // This keeps the static demo available on Vercel even if env vars are not set yet.
+    if (authConfigReady) {
+      await getOIDCClient();
+    } else {
+      console.warn('⚠️  Starting without OIDC client because auth env vars are missing.');
+    }
 
     app.listen(PORT, () => {
       console.log(`
