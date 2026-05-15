@@ -245,11 +245,6 @@ function getOidcCookieDomain(req) {
     return configuredDomain;
   }
 
-  const requestHost = req?.hostname || '';
-  if (requestHost.endsWith('.vercel.app')) {
-    return '.vercel.app';
-  }
-
   return undefined;
 }
 
