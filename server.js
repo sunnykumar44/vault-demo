@@ -211,6 +211,52 @@ if (!oidcDebugState.envVars.COOKIE_SECRET) {
   console.error('   COOKIE_SECRET is missing; cookie creation and verification will fail.');
 }
 
+function getOidcCookieDomain(req) {
+  const configuredDomain = process.env.OIDC_COOKIE_DOMAIN;
+  if (configuredDomain) {
+    return configuredDomain;
+  }
+
+  const requestHost = req?.hostname || '';
+  if (requestHost.endsWith('.vercel.app')) {
+    return '.vercel.app';
+  }
+
+  return undefined;
+}
+
+function buildOidcCookieOptions(req) {
+  const cookieOptions = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production' || process.env.VERCEL === '1',
+    sameSite: 'none',
+    maxAge: 10 * 60 * 1000
+  };
+
+  const cookieDomain = getOidcCookieDomain(req);
+  if (cookieDomain) {
+    cookieOptions.domain = cookieDomain;
+  }
+
+  return cookieOptions;
+}
+
+function buildAuthCookieOptions(req) {
+  const cookieOptions = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production' || process.env.VERCEL === '1',
+    sameSite: 'none',
+    maxAge: 24 * 60 * 60 * 1000
+  };
+
+  const cookieDomain = getOidcCookieDomain(req);
+  if (cookieDomain) {
+    cookieOptions.domain = cookieDomain;
+  }
+
+  return cookieOptions;
+}
+
 /**
  * Cookie configuration for OIDC flow state
  * 
@@ -253,8 +299,8 @@ const OIDC_COOKIE_OPTIONS = {
  */
 const AUTH_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict',
+  secure: process.env.NODE_ENV === 'production' || process.env.VERCEL === '1',
+  sameSite: 'none',
   maxAge: 24 * 60 * 60 * 1000 // 24 hours
 };
 
@@ -614,8 +660,10 @@ app.get('/login', async (req, res) => {
       console.error('🍪 Creating OIDC flow cookies');
       console.error(`   oauth_state length: ${state.length}`);
       console.error(`   oauth_verifier length: ${codeVerifier.length}`);
-      res.cookie('oauth_state', state, OIDC_COOKIE_OPTIONS);
-      res.cookie('oauth_verifier', codeVerifier, OIDC_COOKIE_OPTIONS);
+      const oidcCookieOptions = buildOidcCookieOptions(req);
+      console.error('   OIDC cookie options:', oidcCookieOptions);
+      res.cookie('oauth_state', state, oidcCookieOptions);
+      res.cookie('oauth_verifier', codeVerifier, oidcCookieOptions);
     } catch (cookieError) {
       logDetailedError('Failed to create OIDC cookies', cookieError, {
         stateLength: state.length,
@@ -968,6 +1016,8 @@ app.get('/callback', async (req, res) => {
      */
     try {
       console.error('🍪 Creating authenticated session cookie');
+      const authCookieOptions = buildAuthCookieOptions(req);
+      console.error('   Auth cookie options:', authCookieOptions);
       res.cookie(
         'auth',
         JSON.stringify({
@@ -975,7 +1025,7 @@ app.get('/callback', async (req, res) => {
           id_token: tokenSet.id_token,
           access_token: tokenSet.access_token
         }),
-        AUTH_COOKIE_OPTIONS
+        authCookieOptions
       );
     } catch (cookieError) {
       logDetailedError('Failed to create authenticated session cookie', cookieError, {
@@ -995,8 +1045,9 @@ app.get('/callback', async (req, res) => {
      * - oauth_state: State token (verified and discarded)
      * - oauth_verifier: PKCE verifier (used for exchange)
      */
-    res.clearCookie('oauth_state');
-    res.clearCookie('oauth_verifier');
+    const oidcCookieOptions = buildOidcCookieOptions(req);
+    res.clearCookie('oauth_state', oidcCookieOptions);
+    res.clearCookie('oauth_verifier', oidcCookieOptions);
 
     /**
      * Redirect user home
@@ -1121,9 +1172,11 @@ app.get('/logout', (req, res) => {
   console.log('🚪 User logging out');
 
   // Clear authentication cookies
-  res.clearCookie('auth');
-  res.clearCookie('oauth_state');
-  res.clearCookie('oauth_verifier');
+  const authCookieOptions = buildAuthCookieOptions(req);
+  const oidcCookieOptions = buildOidcCookieOptions(req);
+  res.clearCookie('auth', authCookieOptions);
+  res.clearCookie('oauth_state', oidcCookieOptions);
+  res.clearCookie('oauth_verifier', oidcCookieOptions);
 
   // Redirect to home page
   res.redirect('/');
