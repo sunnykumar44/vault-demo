@@ -704,8 +704,8 @@ app.get('/login', async (req, res) => {
       console.error(`   oauth_verifier length: ${codeVerifier.length}`);
       const oidcCookieOptions = buildOidcCookieOptions(req);
       console.error('   OIDC cookie options:', oidcCookieOptions);
-      res.cookie('oauth_state', state, oidcCookieOptions);
-      res.cookie('oauth_verifier', codeVerifier, oidcCookieOptions);
+      res.cookie('oauth_state', state, { ...oidcCookieOptions, signed: true });
+      res.cookie('oauth_verifier', codeVerifier, { ...oidcCookieOptions, signed: true });
     } catch (cookieError) {
       logDetailedError('Failed to create OIDC cookies', cookieError, {
         stateLength: state.length,
@@ -1112,7 +1112,7 @@ app.get('/callback', async (req, res) => {
           id_token: tokenSet.id_token,
           access_token: tokenSet.access_token
         }),
-        authCookieOptions
+        { ...authCookieOptions, signed: true }
       );
     } catch (cookieError) {
       logDetailedError('Failed to create authenticated session cookie', cookieError, {
