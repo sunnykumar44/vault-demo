@@ -1,0 +1,1001 @@
+/**
+ * Vault OIDC Authentication Demo - Vercel Serverless Compatible
+ * 
+ * This Express.js server demonstrates OAuth 2.0 / OpenID Connect (OIDC)
+ * integration with HashiCorp Vault acting as the OpenID Provider (OP).
+ * 
+ * ================================================================================
+ * KEY ARCHITECTURAL CHANGE: Session Storage Strategy
+ * ================================================================================
+ * 
+ * OLD APPROACH (In-Memory Sessions - NOT Vercel Compatible):
+ * ─────────────────────────────────────────────────────────
+ *   app.use(session({ store: memoryStore }))
+ *   req.session.user = userInfo
+ *   
+ *   Problem on Vercel Serverless:
+ *   - /login runs on Function Instance A → stores state in Instance A's memory
+ *   - /callback runs on Function Instance B → Instance B has empty memory
+ *   - Session lookup fails → "State mismatch" or "Session not found" error
+ *   - Result: 100% login failure rate on Vercel
+ * 
+ * NEW APPROACH (Stateless Signed Cookies - Vercel Compatible):
+ * ────────────────────────────────────────────────────────────
+ *   res.cookie('oauth_state', state, {signed: true, httpOnly: true})
+ *   res.cookie('auth', userJSON, {signed: true, httpOnly: true})
+ *   
+ *   How it Works:
+ *   - Browser automatically maintains cookies across requests
+ *   - /login on Instance A sets cookie → browser stores it
+ *   - /callback on Instance B → browser sends same cookie back
+ *   - Signed with COOKIE_SECRET → any instance can verify it's legitimate
+ *   - Result: Auth flow works regardless of which Vercel instance handles each request
+ * 
+ * ================================================================================
+ * OIDC Authorization Code Flow with PKCE
+ * ================================================================================
+ * 
+ * 1. User visits app and clicks "Login with Vault"
+ * 2. /login generates PKCE parameters → stores in signed cookies → redirects to Vault
+ * 3. User authenticates with Vault and grants consent
+ * 4. Vault redirects to /callback with authorization code
+ * 5. /callback retrieves PKCE params from cookies (browser sent them)
+ * 6. /callback exchanges code for ID token (PKCE verification with codeVerifier from cookie)
+ * 7. /callback stores user info in signed cookie
+ * 8. User is redirected home * 9. Frontend calls /api/auth-status → reads user from cookie
+ * 10. User info persists in auth cookie across all requests
+ * 
+ * ================================================================================
+ * Production Deployment
+ * ================================================================================
+ * 
+ * Local Development:
+ *   npm install && npm start
+ *   http://localhost:3000
+ * 
+ * Vercel Production Deployment:
+ *   1. Create environment variables in Vercel dashboard:
+ *      - VAULT_ISSUER_URL
+ *      - CLIENT_ID
+ *      - CLIENT_SECRET
+ *      - REDIRECT_URI (must be https://your-app.vercel.app/callback)
+ *      - COOKIE_SECRET (generate with: openssl rand -hex 32)
+ *   2. Deploy: git push
+ *   3. Vercel automatically builds and deploys via vercel.json
+ * 
+ * ================================================================================
+ * Documentation
+ * ================================================================================
+ * 
+ * - OpenID Connect: https://openid.net/connect/
+ * - OAuth 2.0 PKCE: https://tools.ietf.org/html/rfc7636
+ * - openid-client: https://github.com/panva/node-openid-client
+ * - Cookies on Vercel: https://vercel.com/docs/concepts/edge-functions/middleware
+ */
+
+require('dotenv').config();
+const express = require('express');
+const cookieParser = require('cookie-parser');
+const path = require('path');
+const { Issuer, generators } = require('openid-client');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ================================================================================
+// CONFIGURATION & VALIDATION
+// ================================================================================
+
+/**
+ * Validate required environment variables
+ * 
+ * These must be set before the server starts:
+ * - VAULT_ISSUER_URL: Base URL of Vault (e.g., https://vault.example.com:8200)
+ * - CLIENT_ID: Application ID registered with Vault OIDC provider
+ * - CLIENT_SECRET: Secure secret for client (keep confidential!)
+ * - REDIRECT_URI: Where Vault redirects after user authenticates
+ *                 Must match Vault's allowed_redirect_uris
+ *                 Example: https://myapp.vercel.app/callback
+ * - COOKIE_SECRET: Secret for signing cookies (prevents tampering)
+ *                  Generate: openssl rand -hex 32
+ */
+const requiredEnvVars = [
+  'VAULT_ISSUER_URL',
+  'CLIENT_ID',
+  'CLIENT_SECRET',
+  'REDIRECT_URI',
+  'COOKIE_SECRET'
+];
+
+const missingEnvVars = requiredEnvVars.filter(v => !process.env[v]);
+
+if (missingEnvVars.length > 0) {
+  console.error('❌ Missing required environment variables:');
+  missingEnvVars.forEach(v => console.error(`   - ${v}`));
+  console.error('\nPlease copy .env.example to .env and fill in your Vault details.');
+  console.error('Or set environment variables in Vercel dashboard.');
+  process.exit(1);
+}
+
+/**
+ * Cookie configuration for OIDC flow state
+ * 
+ * Used for temporary values during /login → /callback sequence:
+ * - oauth_state: CSRF protection token
+ * - oauth_verifier: PKCE code verifier
+ * 
+ * Flags:
+ * - httpOnly: JavaScript cannot access (protects from XSS)
+ * - secure: Only sent over HTTPS (essential in production)
+ * - sameSite: 'strict' prevents CSRF by restricting cross-site requests
+ * - maxAge: 10 minutes (authorization flow should complete quickly)
+ */
+const OIDC_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'strict',
+  maxAge: 10 * 60 * 1000 // 10 minutes
+};
+
+/**
+ * Cookie configuration for authenticated user session
+ * 
+ * After successful login, this cookie stores:
+ * - user: User claims (email, name, sub, etc.)
+ * - id_token: JWT from Vault (contains all claims)
+ * - access_token: Bearer token for API calls
+ * 
+ * This is a stateless session token. Unlike express-session:
+ * - No server-side database needed
+ * - No shared state between function instances
+ * - Works perfectly on Vercel serverless
+ * - User data travels with the request (in the cookie)
+ * 
+ * Flags:
+ * - httpOnly: JavaScript cannot access tokens (XSS protection)
+ * - secure: Only sent over HTTPS
+ * - sameSite: 'strict' prevents CSRF
+ * - maxAge: 24 hours (user session lifetime)
+ */
+const AUTH_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'strict',
+  maxAge: 24 * 60 * 60 * 1000 // 24 hours
+};
+
+// ================================================================================
+// MIDDLEWARE
+// ================================================================================
+
+app.use(express.json());
+
+/**
+ * Enable signed cookie parsing
+ * 
+ * Signature verification:
+ * 1. Browser sends: Cookie: auth=s%3Ajsondata.signature
+ * 2. cookieParser verifies signature with COOKIE_SECRET
+ * 3. If valid: req.signedCookies.auth = jsondata
+ * 4. If invalid (tampered): req.signedCookies.auth = undefined
+ * 
+ * On Vercel, each function instance has access to COOKIE_SECRET via process.env
+ * All instances can verify cookies signed by any other instance
+ * This is why stateless cookies work on serverless!
+ */
+app.use(cookieParser(process.env.COOKIE_SECRET));
+
+/**
+ * Serve static files from public folder
+ * 
+ * Includes:
+ * - index.html: Main UI with auth status bar and demo engines
+ * - auth.js: Frontend authentication logic
+ * - script.js: Demo engine selector
+ * - Engine files: kv.js, pki.js, transit.js, etc.
+ * - style.css: Styling
+ * 
+ * On Vercel, these are served directly by the CDN (no function overhead)
+ */
+app.use(express.static(path.join(__dirname, 'public')));
+
+// ================================================================================
+// OIDC CLIENT INITIALIZATION
+// ================================================================================
+
+/**
+ * Global OIDC client instance
+ * 
+ * Initialized once and cached:
+ * 
+ * Local Development:
+ * - Initialized once when server.js runs
+ * - Shared across all requests to same Node.js process
+ * 
+ * Vercel Serverless:
+ * - Each function instance initializes independently
+ * - Instance-level caching via initPromise prevents duplicate initializations
+ * - Multiple concurrent requests use cached client
+ * - "Cold start" first request may take +500ms (discovery call to Vault)
+ * - Subsequent requests use cached client (warm start, ~1-5ms)
+ */
+let oidcClient = null;
+let initPromise = null;
+
+/**
+ * Initialize OIDC Client via Vault Discovery
+ * 
+ * This function:
+ * 1. Makes HTTP request to Vault's discovery endpoint
+ *    GET {VAULT_ISSUER_URL}/.well-known/openid-configuration
+ * 
+ * 2. Vault responds with:
+ *    - authorization_endpoint: URL for user login
+ *    - token_endpoint: URL for code-to-token exchange
+ *    - jwks_uri: Public keys for JWT verification
+ *    - scopes_supported, claims_supported, etc.
+ * 
+ * 3. Creates openid-client Client with our credentials:
+ *    - client_id: How Vault identifies us
+ *    - client_secret: Proof we're authorized app
+ *    - redirect_uris: Where Vault can redirect us
+ *    - response_types: We use 'code' (authorization code flow)
+ * 
+ * Error Handling:
+ * - Network timeout → catch block logs error
+ * - Invalid URL → catch block logs error
+ * - Vault not running → catch block logs error
+ * - Missing VAULT_ISSUER_URL → process.env check catches it earlier
+ */
+async function initializeOIDC() {
+  try {
+    console.log('🔐 Discovering OIDC configuration from Vault...');
+    console.log(`   Issuer: ${process.env.VAULT_ISSUER_URL}`);
+
+    const issuer = await Issuer.discover(process.env.VAULT_ISSUER_URL);
+
+    console.log(`✅ Discovered issuer: ${issuer.issuer}`);
+    console.log(`   Authorization endpoint: ${issuer.authorization_endpoint}`);
+    console.log(`   Token endpoint: ${issuer.token_endpoint}`);
+
+    /**
+     * Create OIDC Client
+     * 
+     * Parameters:
+     * - client_id: Our application's ID (registered with Vault)
+     * - client_secret: Confidential secret (never sent to browser)
+     * - redirect_uris: Array of allowed redirect URLs
+     *   Example: ["https://myapp.vercel.app/callback"]
+     *   Must match exactly what's registered with Vault
+     * - response_types: ["code"] for authorization code flow
+     */
+    oidcClient = new issuer.Client({
+      client_id: process.env.CLIENT_ID,
+      client_secret: process.env.CLIENT_SECRET,
+      redirect_uris: [process.env.REDIRECT_URI],
+      response_types: ['code']
+    });
+
+    console.log('✅ OIDC client initialized successfully\n');
+    return oidcClient;
+  } catch (error) {
+    console.error('❌ Failed to initialize OIDC client:', error.message);
+    console.error('\nTroubleshooting:');
+    console.error('  1. Ensure Vault is running and accessible');
+    console.error('  2. Verify VAULT_ISSUER_URL is correct');
+    console.error('  3. Check network connectivity to Vault');
+    console.error('  4. For self-signed certificates, may need NODE_TLS_REJECT_UNAUTHORIZED=0 (dev only!)');
+    throw error;
+  }
+}
+
+/**
+ * Get or Initialize OIDC Client
+ * 
+ * This function handles concurrent requests on Vercel:
+ * 
+ * Scenario 1 - Warm Start (common):
+ * - oidcClient already initialized
+ * - Return it immediately (< 1ms)
+ * 
+ * Scenario 2 - Cold Start, First Request:
+ * - oidcClient is null
+ * - initPromise is null
+ * - Create initPromise and start initialization
+ * - Other concurrent requests wait for same promise (not duplicated!)
+ * - Return initialized client once promise resolves
+ * 
+ * This prevents multiple concurrent discovery calls to Vault
+ * (which would be wasteful and might trigger rate limiting)
+ */
+async function getOIDCClient() {
+  if (oidcClient) {
+    return oidcClient;
+  }
+
+  if (!initPromise) {
+    initPromise = initializeOIDC();
+  }
+
+  return await initPromise;
+}
+
+// ================================================================================
+// ROUTES: OIDC AUTHENTICATION FLOW
+// ================================================================================
+
+/**
+ * GET /login
+ * 
+ * Initiates OAuth 2.0 Authorization Code Flow with PKCE
+ * 
+ * Flow:
+ * 1. Generate random security parameters
+ * 2. Store them in signed cookies
+ * 3. Redirect user to Vault's authorization endpoint
+ * 4. Vault handles user authentication
+ * 5. User returns to /callback
+ * 
+ * Security Features:
+ * - PKCE: Prevents authorization code interception
+ * - State: Prevents CSRF attacks
+ * - Signed cookies: Tamper-proof across serverless instances
+ */
+app.get('/login', async (req, res) => {
+  try {
+    const client = await getOIDCClient();
+    /**
+     * PKCE (Proof Key for Code Exchange)
+     * 
+     * Problem: Authorization code alone is vulnerable
+     * - Attacker intercepts code
+     * - Attacker exchanges code + client_id + client_secret
+     * - Attacker gets tokens (if client_secret is leaked)
+     * 
+     * Solution: Require proof code came from same client
+     * - Generate random codeVerifier (43-128 chars)
+     * - Hash to create codeChallenge = SHA256(codeVerifier)
+     * - Send codeChallenge to Vault
+     * - When exchanging code, send codeVerifier
+     * - Vault verifies: SHA256(codeVerifier) == codeChallenge
+     * - Only original client knows codeVerifier (we don't send it to Vault initially)
+     * 
+     * On Vercel Serverless:
+     * - /login generates codeVerifier → stores in signed cookie
+     * - Browser maintains cookie across requests
+     * - /callback retrieves codeVerifier from cookie
+     * - Exchange works even if /login and /callback run on different instances
+     */
+    const codeVerifier = generators.codeVerifier();
+    const codeChallenge = generators.codeChallenge(codeVerifier);
+
+    /**
+     * State Token (CSRF Protection)
+     * 
+     * Attack: CSRF (Cross-Site Request Forgery)
+     * - Attacker creates page that redirects to /login
+     * - User clicks link, gets sent to Vault
+     * - Attacker intercepts redirect back
+     * - Attacker can claim any authorization code as theirs
+     * 
+     * Defense: Verify response came from request we initiated
+     * - Generate random state string
+     * - Send state to Vault
+     * - Vault returns same state
+     * - Verify returned state matches our sent state
+     * - If mismatch: attack detected
+     */
+    const state = generators.state();
+
+    /**
+     * Store OIDC flow parameters in signed cookies
+     * 
+     * WHY COOKIES (instead of express-session):
+     * 
+     * Session Storage (broken on Vercel):
+     * ┌─────────────┐
+     * │ Browser     │
+     * │             │
+     * │ [click /login]
+     * │             │
+     * └──────┬──────┘
+     *        │
+     *        ↓
+     *  ┌──────────────────────────────────────┐
+     *  │ Vercel Function Instance A           │
+     *  │ - Generate codeVerifier              │
+     *  │ - Store in req.session (Instance A)  │
+     *  │ - Redirect to Vault                  │
+     *  └──────────────────────────────────────┘
+     *        │
+     *        [User authenticates with Vault]
+     *        │
+     *        ↓
+     *  ┌──────────────────────────────────────┐
+     *  │ Vercel Function Instance B           │
+     *  │ - Try to read req.session ← EMPTY!   │
+     *  │ - Session not found in Instance B    │
+     *  │ - Auth fails ❌                       │
+     *  └──────────────────────────────────────┘
+     * 
+     * Cookie Storage (works on Vercel):
+     * ┌─────────────────────────────────────────┐
+     * │ Browser                                 │
+     * │ ┌───────────────────────────────────┐  │
+     * │ │ Cookies:                          │  │
+     * │ │ - oauth_state=ABC...              │  │
+     * │ │ - oauth_verifier=XYZ...           │  │
+     * │ └───────────────────────────────────┘  │
+     * │                                         │
+     * │ [click /login]                          │
+     * │                                         │
+     * └──────────────┬──────────────────────────┘
+     *                │
+     *                ↓
+     *         ┌──────────────────────────────────────┐
+     *         │ Vercel Function Instance A           │
+     *         │ - Generate codeVerifier              │
+     *         │ - Set cookie: oauth_verifier=XYZ     │
+     *         │ - Redirect to Vault                  │
+     *         └──────────────────────────────────────┘
+     *                │
+     *                [User authenticates with Vault]
+     *                │
+     *                ↓
+     *         ┌──────────────────────────────────────┐
+     *         │ Vercel Function Instance B           │
+     *         │ - Browser sends cookies!             │
+     *         │ - Read oauth_verifier from cookie ✅ │
+     *         │ - Exchange succeeds ✅               │
+     *         └──────────────────────────────────────┘
+     * 
+     * Key Difference:
+     * - Session: Stored on server (Instance A) → Instance B can't access
+     * - Cookie: Stored on browser → Browser sends with every request
+     * - Cookie signed: Can't be tampered with (signature verified on any instance)
+     */
+    res.cookie('oauth_state', state, OIDC_COOKIE_OPTIONS);
+    res.cookie('oauth_verifier', codeVerifier, OIDC_COOKIE_OPTIONS);
+
+    /**
+     * Build Authorization URL
+     * 
+     * Example result:
+     * https://vault.example.com:8200/oauth/authorize?
+     *   client_id=my-app
+     *   response_type=code
+     *   redirect_uri=https://myapp.vercel.app/callback
+     *   scope=openid%20profile%20email
+     *   state=random-state-123
+     *   code_challenge=base64url-sha256-hash
+     *   code_challenge_method=S256
+     * 
+     * Scopes:
+     * - openid: Required for OpenID Connect (mandatory, gets ID token)
+     * - profile: Request user's name, family_name, etc.
+     * - email: Request user's email address
+     * 
+     * User will see Vault login page at this URL
+     */
+    const authorizationUrl = client.authorizationUrl({
+      scope: 'openid profile email',
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+      state: state
+    });
+
+    console.log('📍 Redirecting user to Vault authorization endpoint');
+    res.redirect(authorizationUrl);
+  } catch (error) {
+    console.error('❌ Error in /login:', error.message);
+    res.status(500).json({
+      error: 'Failed to initiate login',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * GET /callback
+ * 
+ * Vault redirects here after user authenticates
+ * 
+ * URL format:
+ * https://myapp.vercel.app/callback?code=AUTH_CODE&state=STATE_VALUE
+ * 
+ * This endpoint:
+ * 1. Verifies CSRF token (state parameter)
+ * 2. Retrieves PKCE verifier from cookies
+ * 3. Exchanges authorization code for ID token
+ * 4. Validates JWT signature and claims
+ * 5. Stores user info in signed cookie
+ * 6. Redirects to home page
+ * 
+ * Security:
+ * - PKCE prevents code interception attacks
+ * - State prevents CSRF attacks
+ * - JWT validation ensures Vault actually issued the token
+ */
+app.get('/callback', async (req, res) => {
+  try {
+    const client = await getOIDCClient();
+    const { code, state } = req.query;
+
+    /**
+     * Retrieve PKCE and CSRF tokens from signed cookies
+     * 
+     * These were set by /login endpoint:
+     * - oauth_state: CSRF protection token
+     * - oauth_verifier: PKCE code verifier
+     * 
+     * cookieParser automatically verifies signatures:
+     * - If signature is valid: req.signedCookies has the value
+     * - If signature is invalid (tampered): req.signedCookies has undefined
+     * 
+     * On Vercel:
+     * - COOKIE_SECRET from environment is used for verification
+     * - Any function instance can verify cookies from any other instance
+     * - User's browser maintains cookies across all requests
+     */
+    const cookieState = req.signedCookies.oauth_state;
+    const cookieVerifier = req.signedCookies.oauth_verifier;
+
+    // Validate we received authorization code
+    if (!code) {
+      console.error('❌ No authorization code received from Vault');
+      return res.status(400).json({
+        error: 'No authorization code',
+        details: 'Vault did not return an authorization code. User may have denied consent.'
+      });
+    }
+
+    /**
+     * CSRF Protection: Verify State Parameter
+     * 
+     * Attack Scenario:
+     * 1. Attacker creates malicious page with <img src="https://vault.com/authorize?state=FAKE">
+     * 2. User visits attacker's page
+     * 3. Attacker's page redirects user to Vault
+     * 4. User authenticates (doesn't realize what they're doing)
+     * 5. Attacker captures the authorization code
+     * 6. Attacker redirects user to /callback with attacker's code
+     * 7. Without state verification: /callback would accept it!
+     * 
+     * Defense: State Parameter
+     * - /login generates unique state = "abc123"
+     * - /login stores in cookie: oauth_state=abc123
+     * - /login redirects to: /authorize?state=abc123
+     * - Vault returns: /callback?code=xxx&state=abc123
+     * - /callback verifies: url_state (abc123) == cookie_state (abc123)
+     * - If attacker tries different state: verification fails!
+     * - Attack prevented ✅
+     */
+    if (!state || state !== cookieState) {
+      console.error('❌ State parameter mismatch - possible CSRF attack');
+      console.error(`   Received from Vault: ${state}`);
+      console.error(`   Stored in cookie: ${cookieState}`);
+      return res.status(400).json({
+        error: 'Invalid state parameter',
+        details: 'State mismatch detected. This could indicate a CSRF attack.'
+      });
+    }
+
+    /**
+     * PKCE Verification: Validate Code Verifier
+     * 
+     * Attack Scenario:
+     * 1. Attacker intercepts authorization code from Vault
+     * 2. Attacker sends code to /callback
+     * 3. Without PKCE: We might accept it (if code is valid)
+     * 4. Attacker gets access tokens!
+     * 
+     * Defense: PKCE (Proof Key for Code Exchange)
+     * - /login generated: codeVerifier = random string
+     * - /login hashed it: codeChallenge = SHA256(codeVerifier)
+     * - /login sent to Vault: ?code_challenge=codeChallenge
+     * - /callback retrieves: codeVerifier from cookie
+     * - /callback sends to Vault: code_verifier=codeVerifier
+     * - Vault verifies: SHA256(codeVerifier) == codeChallenge
+     * - If attacker has code but not codeVerifier: exchange fails!
+     * - Attack prevented ✅
+     */
+    if (!cookieVerifier) {
+      console.error('❌ PKCE code verifier not found in cookies');
+      return res.status(400).json({
+        error: 'Invalid session state',
+        details: 'PKCE code verifier is missing. Session may have expired.'
+      });
+    }
+
+    console.log('✅ State and PKCE parameters verified (CSRF + auth code interception protected)');
+
+    /**
+     * Exchange Authorization Code for Tokens
+     * 
+     * Server-to-Server Request to Vault Token Endpoint:
+     * 
+     * Request Headers:
+     * - Authorization: Basic base64(client_id:client_secret)
+     * 
+     * Request Body:
+     * - grant_type=authorization_code
+     * - code=AUTH_CODE (from Vault redirect)
+     * - code_verifier=VERIFIER (our PKCE code)
+     * - redirect_uri=https://myapp.vercel.app/callback (must match exactly)
+     * 
+     * Vault Validates:
+     * 1. Authorization code exists and hasn't been used
+     * 2. Authorization code hasn't expired (usually 5-10 seconds)
+     * 3. client_id + client_secret match our registered app
+     * 4. redirect_uri matches what was used in /authorize
+     * 5. SHA256(code_verifier) == code_challenge sent in /authorize
+     * 
+     * Response (tokenSet):
+     * - id_token: JWT with user info (signed by Vault)
+     * - access_token: Bearer token for API requests
+     * - token_type: "Bearer"
+     * - expires_in: 3600 (seconds until token expires)
+     * - scope: "openid profile email"
+     * 
+     * CRITICAL SECURITY:
+     * - client_secret is sent server-to-server (never exposed to browser)
+     * - Happens over HTTPS
+     * - Authorization code used only once
+     */
+    const params = client.callbackParams(req);
+    const tokenSet = await client.callback(
+      process.env.REDIRECT_URI,
+      params,
+      {
+        code_verifier: cookieVerifier
+      }
+    );
+
+    console.log('✅ Successfully exchanged authorization code for tokens');
+
+    /**
+     * Decode and Validate ID Token
+     * 
+     * ID Token is a JWT (JSON Web Token) signed by Vault
+     * 
+     * JWT Structure:
+     * {
+     *   "header": {
+     *     "alg": "RS256",        ← Algorithm (RSA SHA-256)
+     *     "typ": "JWT"           ← Type
+     *   },
+     *   "payload": {
+     *     "iss": "https://vault.example.com:8200",  ← Who issued it
+     *     "sub": "user-123",                        ← Subject (user ID)
+     *     "aud": "my-app-id",                       ← Audience (client_id)
+     *     "exp": 1234567890,                        ← Expiration time
+     *     "iat": 1234567000,                        ← Issued at time
+     *     "auth_time": 1234566900,                  ← When user authenticated
+     *     "email": "user@example.com",              ← User's email
+     *     "name": "John Doe",                       ← User's name
+     *     "preferred_username": "johndoe"           ← Preferred username
+     *   },
+     *   "signature": "base64-encoded-signature"
+     * }
+     * 
+     * Validation (done by openid-client):
+     * 1. Signature verification: Verify token was signed by Vault's private key
+     *    (Uses Vault's public key from JWKS endpoint)
+     * 2. Expiration check: Verify token hasn't expired (exp claim)
+     * 3. Audience check: Verify aud = our client_id (token intended for us)
+     * 4. Issuer check: Verify iss = VAULT_ISSUER_URL (token from correct Vault)
+     * 5. Nonce validation: If nonce was sent, verify it matches (optional)
+     * 
+     * If any validation fails: openid-client throws error (caught below)
+     */
+    const userInfo = tokenSet.claims();
+
+    console.log(`✅ User authenticated: ${userInfo.email || userInfo.sub}`);
+    console.log('✅ ID token signature verified (token is legitimate and from Vault)');
+
+    /**
+     * Store Authenticated User in Signed Cookie
+     * 
+     * WHY COOKIES (instead of server-side sessions):
+     * 
+     * Traditional Sessions (broken on Vercel):
+     * - Store user in req.session.user
+     * - Session stored in server memory / database
+     * - Browser gets session ID in cookie
+     * - Each request: look up session by ID in database
+     * 
+     * Problem on Vercel Serverless:
+     * - /callback stores user in Function Instance B memory
+     * - Next request to /api/auth-status hits Function Instance C
+     * - Function Instance C has empty memory
+     * - User lookup fails (session not in C's memory)
+     * - Result: User appears logged out on page refresh!
+     * 
+     * Stateless Cookies:
+     * - Store entire user data in encrypted cookie
+     * - Browser maintains cookie
+     * - Any function instance can read and verify cookie
+     * - No shared server state needed
+     * - Perfect for Vercel serverless!
+     * 
+     * Cookie Contents (stringified JSON):
+     * {
+     *   "user": {
+     *     "sub": "user-123",
+     *     "email": "user@example.com",
+     *     "name": "John Doe",
+     *     ...other OIDC claims
+     *   },
+     *   "id_token": "eyJhbGc...",  ← Full JWT from Vault (signed)
+     *   "access_token": "ya29...",  ← Bearer token for APIs
+     *   "token_type": "Bearer"
+     * }
+     * 
+     * Cookie is:
+     * - Signed: Tamper-proof (signature verified on every request)
+     * - HTTP-only: JavaScript cannot access (XSS protection)
+     * - Secure: Only sent over HTTPS
+     * - SameSite=strict: Prevents CSRF
+     */
+    res.cookie(
+      'auth',
+      JSON.stringify({
+        user: userInfo,
+        id_token: tokenSet.id_token,
+        access_token: tokenSet.access_token
+      }),
+      AUTH_COOKIE_OPTIONS
+    );
+
+    /**
+     * Clear temporary OIDC flow cookies
+     * 
+     * These were used only for /login → /callback flow
+     * We no longer need them:
+     * - oauth_state: State token (verified and discarded)
+     * - oauth_verifier: PKCE verifier (used for exchange)
+     */
+    res.clearCookie('oauth_state');
+    res.clearCookie('oauth_verifier');
+
+    /**
+     * Redirect user home
+     * 
+     * Frontend will:
+     * 1. Load index.html
+     * 2. Run auth.js on page load
+     * 3. Call /api/auth-status to check if logged in
+     * 4. See auth cookie present
+     * 5. Display user profile and secret engines
+     */
+    console.log('📍 Redirecting to home page\n');
+    res.redirect('/');
+  } catch (error) {
+    console.error('❌ Error in /callback:', error.message);
+    if (error.response?.body) {
+      console.error('   Vault response:', error.response.body);
+    }
+    res.status(500).json({
+      error: 'Failed to process authentication',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ================================================================================
+// ROUTES: USER SESSION & API
+// ================================================================================
+
+/**
+ * GET /api/auth-status
+ * 
+ * Returns current authenticated user information
+ * 
+ * Frontend calls this on page load to:
+ * 1. Check if user is logged in
+ * 2. Get user's claims (email, name, etc.)
+ * 3. Display user profile
+ * 4. Hide/show login button based on auth status
+ * 
+ * HOW THIS WORKS ON VERCEL SERVERLESS:
+ * 
+ * Step-by-step:
+ * 1. Frontend (JavaScript) makes request: fetch('/api/auth-status')
+ * 2. Browser automatically includes auth cookie (set by /callback)
+ * 3. Request arrives at Vercel (could be any function instance)
+ * 4. Express middleware parses cookies via cookieParser
+ * 5. Express verifies auth cookie signature with COOKIE_SECRET
+ * 6. If valid: req.signedCookies.auth contains user JSON
+ * 7. If invalid: req.signedCookies.auth is undefined (cookie tampered)
+ * 
+ * KEY INSIGHT:
+ * - COOKIE_SECRET is in environment (same for all instances)
+ * - Any instance can verify cookies from any other instance
+ * - Works even if /api/auth-status runs on different instance than /callback
+ * - User stays logged in regardless of Vercel routing
+ * 
+ * Response Format:
+ * {
+ *   "authenticated": true,
+ *   "user": {
+ *     "sub": "user-123",
+ *     "email": "user@example.com",
+ *     "name": "John Doe"
+ *   },
+ *   "id_token": "eyJhbGc..."  ← Optional JWT for display/debugging
+ * }
+ */
+app.get('/api/auth-status', (req, res) => {
+  try {
+    const authCookie = req.signedCookies.auth;
+
+    if (!authCookie) {
+      // No auth cookie found - user is logged out
+      return res.json({
+        authenticated: false,
+        user: null
+      });
+    }
+
+    // Parse auth cookie (it's a JSON string)
+    const authData = JSON.parse(authCookie);
+
+    return res.json({
+      authenticated: true,
+      user: authData.user,
+      id_token: authData.id_token // Frontend may display this for debugging
+    });
+  } catch (error) {
+    console.error('❌ Error in /api/auth-status:', error.message);
+    res.status(500).json({
+      error: 'Failed to get auth status',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * GET /logout
+ * 
+ * Logs user out by clearing authentication cookies
+ * 
+ * Steps:
+ * 1. Clear auth cookie (contains user data and tokens)
+ * 2. Clear OIDC flow cookies (in case they still exist)
+ * 3. Redirect to home page
+ * 4. Frontend detects user is logged out (no auth cookie)
+ * 5. UI updates to show login button
+ * 
+ * Note:
+ * - Clears browser cookies (stops sending auth cookie)
+ * - Vault session still exists on Vault server
+ * - If user logs in again soon, Vault might not require re-authentication
+ * - For complete logout from Vault too: would need to redirect to Vault's
+ *   end_session_endpoint and do logout dance (not implemented in this demo)
+ */
+app.get('/logout', (req, res) => {
+  console.log('🚪 User logging out');
+
+  // Clear authentication cookies
+  res.clearCookie('auth');
+  res.clearCookie('oauth_state');
+  res.clearCookie('oauth_verifier');
+
+  // Redirect to home page
+  res.redirect('/');
+});
+
+// ================================================================================
+// ROUTES: SERVE SPA
+// ================================================================================
+
+/**
+ * GET / (and other unmatched routes)
+ * 
+ * Serves index.html for any route not matched above
+ * 
+ * Why:
+ * - Frontend is a single-page app (SPA)
+ * - Frontend handles routing for demo engine selections
+ * - All routes should return index.html
+ * - JavaScript in frontend then routes appropriately
+ */
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+/**
+ * Catch-all: any other route
+ * Serve index.html (SPA routing)
+ */
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ================================================================================
+// ERROR HANDLING
+// ================================================================================
+
+/**
+ * Global error handler
+ * 
+ * Catches any unhandled errors and returns JSON response
+ * Prevents server crashes and gives meaningful error messages
+ */
+app.use((err, req, res, next) => {
+  console.error('❌ Unhandled error:', err);
+  res.status(500).json({
+    error: 'Internal server error',
+    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
+});
+
+// ================================================================================
+// SERVER STARTUP & EXPORT
+// ================================================================================
+
+/**
+ * Initialize OIDC and start server
+ * 
+ * Local Development:
+ * - Initializes OIDC on startup
+ * - Starts Express server
+ * - Listens on PORT (default 3000)
+ * 
+ * Vercel Production:
+ * - Initialization happens lazily on first request
+ * - Vercel's runtime handles server startup
+ * - app is exported as serverless function handler
+ */
+async function startServer() {
+  try {
+    // Initialize OIDC client
+    await getOIDCClient();
+
+    app.listen(PORT, () => {
+      console.log(`
+╔═══════════════════════════════════════════════════════════════╗
+║                                                               ║
+║  🏦 Vault OIDC Demo - Vercel Serverless Compatible           ║
+║                                                               ║
+║  Server running on: http://localhost:${PORT}
+║                                                               ║
+║  OIDC Issuer: ${process.env.VAULT_ISSUER_URL}
+║  Redirect URI: ${process.env.REDIRECT_URI}
+║                                                               ║
+║  Architecture:                                                ║
+║  ✅ Express.js backend                                        ║
+║  ✅ Stateless signed cookies (Vercel compatible)             ║
+║  ✅ PKCE flow (secure OAuth 2.0)                             ║
+║  ✅ Frontend secret engine demos                             ║
+║                                                               ║
+║  Deployment:                                                  ║
+║  Local:  npm start                                            ║
+║  Vercel: git push (auto-deploy via vercel.json)              ║
+║                                                               ║
+╚═══════════════════════════════════════════════════════════════╝
+      `);
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+// Start in local development
+startServer().catch(error => {
+  console.error('Fatal error:', error);
+  process.exit(1);
+});
+
+// ================================================================================
+// EXPORT FOR VERCEL
+// ================================================================================
+
+/**
+ * Export Express app for Vercel serverless functions
+ * 
+ * Vercel wraps this and invokes it for each request
+ * Works alongside app.listen() for local development
+ */
+module.exports = app;
