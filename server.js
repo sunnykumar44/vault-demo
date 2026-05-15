@@ -893,13 +893,31 @@ app.get('/callback', async (req, res) => {
      * - Vault verifies: SHA256(codeVerifier) == codeChallenge
      * - If attacker has code but not codeVerifier: exchange fails!
      * - Attack prevented ✅
+     *
+     * NOT PRODUCTION SAFE:
+     * - DEMO_MODE bypass exists only for controlled OIDC learning/demo purposes.
+     * - PKCE normally protects authorization code exchange from interception.
      */
+    const demoPkceBypassActive = demoModeEnabled && Boolean(code) && !cookieVerifier;
+    console.error('   DEMO_MODE PKCE bypass executed:', demoPkceBypassActive);
+
     if (!cookieVerifier) {
-      console.error('❌ PKCE code verifier not found in cookies');
-      return res.status(400).json({
-        error: 'Invalid session state',
-        details: 'PKCE code verifier is missing. Session may have expired.'
-      });
+      if (demoPkceBypassActive) {
+        console.error('#######################################################################');
+        console.error('### DEMO MODE ACTIVE - BYPASSING MISSING PKCE VERIFIER               ###');
+        console.error('### NOT PRODUCTION SAFE                                              ###');
+        console.error('### PKCE normally protects authorization code exchange.              ###');
+        console.error('### This bypass exists only for controlled learning/demo purposes.   ###');
+        console.error('#######################################################################');
+        console.error('   Reason for bypass: browser did not return the signed PKCE cookie');
+        console.error('   Callback continuing without PKCE verifier in DEMO_MODE');
+      } else {
+        console.error('❌ PKCE code verifier not found in cookies');
+        return res.status(400).json({
+          error: 'Invalid session state',
+          details: 'PKCE code verifier is missing. Session may have expired.'
+        });
+      }
     }
 
     console.log('✅ State and PKCE parameters verified (CSRF + auth code interception protected)');
@@ -942,12 +960,15 @@ app.get('/callback', async (req, res) => {
     console.error('   Token exchange started:', true);
     console.error('   Redirect URI for callback exchange:', process.env.REDIRECT_URI);
     console.error('   callbackParams parsed:', params);
+    const callbackOptions = {};
+    if (cookieVerifier) {
+      callbackOptions.code_verifier = cookieVerifier;
+    }
+    console.error('   PKCE verifier provided to token exchange:', Boolean(callbackOptions.code_verifier));
     const tokenSet = await client.callback(
       process.env.REDIRECT_URI,
       params,
-      {
-        code_verifier: cookieVerifier
-      }
+      callbackOptions
     );
 
     console.error('✅ Successfully exchanged authorization code for tokens');
@@ -1075,6 +1096,7 @@ app.get('/callback', async (req, res) => {
       console.error('🎓 DEMO_MODE active: returning learning page with decoded ID token claims');
       const rawJwt = tokenSet.id_token || '';
       const claimsJson = JSON.stringify(userInfo, null, 2);
+      const accessToken = tokenSet.access_token || '';
       const profileSummary = [
         userInfo.email ? `<li><strong>Email:</strong> ${userInfo.email}</li>` : '',
         userInfo.name ? `<li><strong>Name:</strong> ${userInfo.name}</li>` : '',
@@ -1118,6 +1140,8 @@ app.get('/callback', async (req, res) => {
             <pre>${claimsJson.replace(/</g, '&lt;')}</pre>
             <h2>Raw JWT</h2>
             <pre>${rawJwt.replace(/</g, '&lt;')}</pre>
+            <h2>Access Token</h2>
+            <pre>${accessToken.replace(/</g, '&lt;') || '(not present)'}</pre>
             <h2>Selected Profile Claims</h2>
             <ul>${profileSummary || '<li>No profile claims were present.</li>'}</ul>
             <div class="actions">
