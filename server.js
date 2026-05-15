@@ -77,7 +77,14 @@ require('dotenv').config();
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
-const { Issuer, generators } = require('openid-client');
+const { Issuer, generators, custom } = require('openid-client');
+
+custom.setHttpOptionsDefaults({
+  headers: {
+    'X-Pinggy-No-Screen': 'true'
+  }
+});
+console.error('🔧 openid-client configured with X-Pinggy-No-Screen header for outbound OIDC requests');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
