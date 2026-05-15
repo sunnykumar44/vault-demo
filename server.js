@@ -846,18 +846,26 @@ app.get('/callback', async (req, res) => {
      * - If attacker tries different state: verification fails!
      * - Attack prevented ✅
      */
-    if (!state || state !== cookieState) {
-      if (demoModeEnabled && code) {
-        console.error('#######################################################################');
-        console.error('### DEMO MODE WARNING: STATE VALIDATION BYPASSED FOR CONTROLLED DEMO  ###');
-        console.error('### NOT PRODUCTION SAFE                                              ###');
-        console.error('### State validation normally protects against CSRF attacks.         ###');
-        console.error('### This bypass exists only for controlled OIDC learning/demo setups. ###');
-        console.error('#######################################################################');
-        console.error('   Reason for bypass: browser did not return the signed OIDC state cookie');
-        console.error('   Expected state value:', cookieState || '(missing)');
-        console.error('   Received state value:', state || '(missing)');
-      } else {
+    const stateIsValid = Boolean(state && state === cookieState);
+    const demoStateBypassActive = demoModeEnabled && Boolean(code) && !stateIsValid;
+
+    console.error('   DEMO_MODE enabled:', demoModeEnabled);
+    console.error('   State validation result:', stateIsValid ? 'valid' : 'invalid or missing');
+    console.error('   DEMO_MODE bypass executed:', demoStateBypassActive);
+
+    if (demoStateBypassActive) {
+      console.error('#######################################################################');
+      console.error('### DEMO MODE WARNING: STATE VALIDATION BYPASSED FOR CONTROLLED DEMO  ###');
+      console.error('### NOT PRODUCTION SAFE                                              ###');
+      console.error('### State validation normally protects against CSRF attacks.         ###');
+      console.error('### This bypass exists only for controlled OIDC learning/demo setups. ###');
+      console.error('#######################################################################');
+      console.error('   Reason for bypass: browser did not return the signed OIDC state cookie');
+      console.error('   Expected state value:', cookieState || '(missing)');
+      console.error('   Received state value:', state || '(missing)');
+      console.error('   Callback continuing past state validation in DEMO_MODE');
+      console.error('   Callback continued:', true);
+    } else if (!stateIsValid) {
       console.error('❌ State parameter mismatch - possible CSRF attack');
       console.error(`   Received from Vault: ${state}`);
       console.error(`   Stored in cookie: ${cookieState}`);
@@ -865,7 +873,6 @@ app.get('/callback', async (req, res) => {
         error: 'Invalid state parameter',
         details: 'State mismatch detected. This could indicate a CSRF attack.'
       });
-      }
     }
 
     /**
@@ -932,6 +939,7 @@ app.get('/callback', async (req, res) => {
      */
     const params = client.callbackParams(req);
     console.error('🔁 Exchanging authorization code for tokens');
+    console.error('   Token exchange started:', true);
     console.error('   Redirect URI for callback exchange:', process.env.REDIRECT_URI);
     console.error('   callbackParams parsed:', params);
     const tokenSet = await client.callback(
